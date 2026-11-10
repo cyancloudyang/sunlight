@@ -174,6 +174,15 @@ final class CanvasController {
     // Capture policy (see `capturePass`)
     /// The window being handed off to: its app's windows are about to be in front.
     private var handoffTarget: WindowProxy?
+    /// The focus round-trip's saved state (`fillScreen`): the window's pre-focus real frame and map
+    /// rect, the camera to pull back to, and what the proxy grew to at the seam. Restored on return.
+    private var focusSavedFrame: CGRect?
+    private var focusSavedID: CGWindowID?
+    private var focusMapRect: CGRect?
+    private var focusReturnCamera: Camera?
+    private var focusGrownRect: CGRect?
+    /// The proxy flying home under the return flight, for a cancelled flight to put back at once.
+    private var focusReturnProxy: WindowProxy?
     /// A flight into a live window: its inactive shadow look is eased towards the active one over it
     /// (`flightShadow`), so the window server's switch as the window becomes key changes nothing, and
     /// the seam shows no shadow blink (see `LiveWindowsWire.ShadowLook`).
@@ -359,9 +368,9 @@ final class CanvasController {
         view.onSpring = { [weak self] proxy, point in self?.springInto(proxy, around: point) }
         view.onFileDragEnded = { [weak self] in self?.fileDragEnded() }
         view.onEnter = { [weak self] proxy, point in self?.handoff(to: proxy, placement: .inPlace(around: point)) }
-        view.onClickEnter = { [weak self] proxy, point, offset in
+        view.onClickEnter = { [weak self] proxy, _, _ in
             self?.preClickCamera = self?.view.camera
-            self?.handoff(to: proxy, placement: .clicked(at: point, offset: offset))
+            self?.handoff(to: proxy, placement: .fillScreen)   // a click is a command: this window, full screen
         }
         view.onClickFocus = { [weak self] proxy in self?.focusFromFlight(proxy) }
         view.onUse = { [weak self] proxy, point, press in self?.use(proxy, around: point, press: press) }
@@ -392,6 +401,14 @@ final class CanvasController {
             handoffTarget?.heldBack = false
             if let t = handoffTarget { unpark(t) }
             if let t = handoffTarget, t.pipShown != nil { t.pipShown = nil; view.pipChanged(t) }   // a return cut short
+            if let t = handoffTarget, let mapRect = focusMapRect { t.place(mapRect) }   // the growth never landed
+            if handoffTarget != nil { clearFocusRestore() }
+            if let p = focusReturnProxy, let mapRect = focusMapRect, let saved = focusSavedFrame {
+                p.placedNatively(at: saved)
+                p.place(mapRect)   // the way back cut short: home it goes
+                focusReturnProxy = nil
+                clearFocusRestore()
+            }
             handingOff = false
             handoffTarget = nil   // the target's streams come back with the next pass
             shadowFlight = nil
@@ -4669,7 +4686,7 @@ final class CanvasController {
     /// straight zoom-in a click or ⏎ gets. `gliding`: the window is drawn there now (where it opened, at
     /// 1:1 in front of everything) and glides to its place on the canvas as the camera goes to it, so
     /// it never leaves the screen on the way (live windows; see `slide(into:)`).
-    func handoff(to p: WindowProxy, placement: Placement = .centered, spatial: Bool = false, gliding from: CGPoint? = nil) {
+    func handoff(to p: WindowProxy, placement: Placement = .fillScreen, spatial: Bool = false, gliding from: CGPoint? = nil) {
         guard !handingOff, p.kind == .window else { return letGo(p) }
         // A sheet or prompt is entered through its parent, which it rides on; the clicked spot stays put.
         if let parent = parentOf(p) {
@@ -4686,6 +4703,8 @@ final class CanvasController {
         // presented, so the flight played with nothing on screen following it and the window jumped
         // into place at the seam. One now, before the handoff starts, so the flight carries them.
         if renderer == .realWindows, !realWindowListReady { listNow() }
+        // A way back still in the air: home it (and clear its saves) before this focus writes its own.
+        if focusReturnProxy != nil { view.cancelAnimation() }
         handingOff = true
         endShowDesktop(flyBack: false)
         handoffTarget = p   // before the camera moves: the pass must not restart its stream mid-flight
@@ -4800,27 +4819,34 @@ final class CanvasController {
             return
         }
 
-        // Move the real window now, while it's still hidden behind the canvas, then read back where it
-        // actually went (apps can refuse or clamp) and aim the camera at *that*. Without Accessibility the
-        // camera goes to the window instead of the window coming to the camera. A native-fullscreen
-        // window can't be moved at all; activating its app switches to its Space.
+        // The tablecloth way in (`fillScreen`): the real window stays behind the map until the seam
+        // while the proxy grows from its map rect to the visible frame, riding the camera's swoop.
+        // The other placements move the real window now, while it's still hidden behind the canvas,
+        // then read back where it actually went (apps can refuse or clamp) and aim the camera at
+        // *that*. Without Accessibility the camera goes to the window instead of the window coming to
+        // the camera. A native-fullscreen window can't be moved at all; activating its app switches to
+        // its Space.
+        let fillsScreen: Bool
+        if case .fillScreen = placement { fillsScreen = p.ax != nil && p.ax?.isFullScreen == false } else { fillsScreen = false }
         let real: CGRect
-        if let ax = p.ax, !ax.isFullScreen {
+        if fillsScreen {
+            real = p.lastRealFrame   // the seam moves and grows it; the flight only carries the proxy
+        } else if let ax = p.ax, !ax.isFullScreen {
             ax.setPosition(toGlobal(origin))
             real = ax.frame ?? CGRect(origin: toGlobal(origin), size: p.worldRect.size)
         } else {
             real = p.ax?.frame ?? p.lastRealFrame
         }
-        p.placedNatively(at: real)
+        if !fillsScreen { p.placedNatively(at: real) }
 
-        var aligned = cameraAligning(p, with: real)
+        var aligned = fillsScreen ? plan.camera : cameraAligning(p, with: real)
         // In place, a window whose top would be above the menu bar lands right under it, where it was
         // asked to go (`Handoff.plan` clamps): the camera settles on it there, and the window keeps its
         // place on the canvas, as with live windows (the canvas shifts by the difference, not the
         // window). One the app put elsewhere (its own limits) eases to where it landed instead, and
         // nothing else on the canvas moves.
         var move: CGPoint?
-        if let target = plan.inPlace {
+        if !fillsScreen, let target = plan.inPlace {
             let landed = target.toWorld(toView(real.origin))
             let asked = toGlobal(plan.origin)
             let clampedOnly = plan.origin.y > plan.inPlaceOrigin.y
@@ -4835,8 +4861,38 @@ final class CanvasController {
                 }
             }
         }
-        let complete: () -> Void = { [weak self] in self?.enter(p, realFrame: real, activateApp: true) }
-        if plan.inPlace == nil, spatial || view.isFlying {
+        let complete: () -> Void = { [weak self] in
+            guard let self, self.handoffTarget === p else { return }
+            // The window may have closed or minimized on the way: nothing to enter, back to the map.
+            guard Handoff.outcome(windowAlive: WindowList.onScreen(p.windowID) != nil) == .completed else {
+                self.abortFocus(p)
+                return
+            }
+            var landed = real
+            if fillsScreen {
+                // The seam: grow the real window to the visible frame and align over what it actually
+                // took — an app that clamps the resize lands where it lands, and the canvas accepts it.
+                let requested = toGlobal(CGRect(origin: origin, size: visibleTopLeft.size))
+                p.ax?.setPosition(requested.origin)
+                _ = p.ax?.setSize(requested.size)
+                landed = Handoff.seamRect(actualFrame: p.ax?.frame ?? requested, requested: requested)
+                p.placedNatively(at: landed)
+                view.set(camera: cameraAligning(p, with: landed))
+                focusGrownRect = p.worldRect
+            }
+            self.enter(p, realFrame: landed, activateApp: true)
+        }
+        if fillsScreen {
+            let mapRect = p.worldRect
+            let grown = CGRect(origin: plan.camera.toWorld(visibleTopLeft.origin), size: visibleTopLeft.size)
+            focusSavedFrame = p.lastRealFrame
+            focusSavedID = p.windowID
+            focusMapRect = mapRect
+            focusReturnCamera = view.camera
+            view.fly(to: aligned, step: { [weak p] t in
+                p?.place(Handoff.flightRect(from: mapRect, to: grown, at: t))
+            }, completion: complete)
+        } else if plan.inPlace == nil, spatial || view.isFlying {
             // A flight already under way carries its momentum into the seam.
             view.fly(to: aligned, completion: complete)
         } else {
@@ -5432,6 +5488,57 @@ final class CanvasController {
         Handoff.cameraAligning(p.worldRect, with: toView(real))
     }
 
+    private func clearFocusRestore() {
+        focusSavedFrame = nil
+        focusSavedID = nil
+        focusMapRect = nil
+        focusGrownRect = nil
+        focusReturnCamera = nil
+    }
+
+    /// The window closed or minimized during the flight: nothing to enter. The proxy goes back to its
+    /// map rect (the growth never landed) and the camera pulls back to where the handoff started.
+    private func abortFocus(_ p: WindowProxy) {
+        Log.note("Handoff: \(p.appName) gone before the seam — back to the map")
+        handingOff = false
+        handoffTarget = nil
+        if let mapRect = focusMapRect { p.place(mapRect) }
+        let back = focusReturnCamera
+        clearFocusRestore()
+        if let back { view.fly(to: back) }
+        scheduleCapturePass()
+    }
+
+    /// The focus round-trip's way back: the proxy flies from the screen-filling rect to its map place
+    /// as the camera pulls back, and the real window keeps its pre-focus frame behind the canvas.
+    private func restoreFocus(_ wasIn: WindowProxy?) {
+        guard focusReturnProxy == nil else { return }   // a way back already in the air
+        guard let p = wasIn, let saved = focusSavedFrame, let mapRect = focusMapRect,
+              let grown = focusGrownRect, let back = focusReturnCamera, p.windowID == focusSavedID else {
+            clearFocusRestore()
+            return
+        }
+        p.place(grown)   // where the real window was: the flight starts full screen
+        p.refresh(seam: true)   // its content as it was in use, before it shrinks back
+        if let ax = p.ax, !ax.isFullScreen {
+            ax.setPosition(saved.origin)
+            _ = ax.setSize(saved.size)
+        }
+        let landedBack = p.ax?.frame ?? saved
+        focusReturnProxy = p
+        view.fly(to: back, step: { [weak p] t in
+            p?.place(Handoff.flightRect(from: grown, to: mapRect, at: t))
+        }, completion: { [weak self, weak p] in
+            guard let self else { return }
+            if let p {
+                p.placedNatively(at: landedBack)
+                p.place(mapRect)
+            }
+            self.focusReturnProxy = nil
+            self.clearFocusRestore()
+        })
+    }
+
     /// The moment a real window is in front of the canvas, pixel-matched to its proxy. Shared by the
     /// canvas-initiated handoff (which activates the app) and takeover's absorb (the app is already active).
     private func enter(_ p: WindowProxy, realFrame: CGRect, activateApp: Bool) {
@@ -5613,6 +5720,7 @@ final class CanvasController {
         env?.watcher.stopObserving()
         beginPendingPip(leaving: wasIn)
         leaveEntered(reconcile: true)
+        restoreFocus(wasIn)   // a window grown to fill the screen flies back to its map place
         applyPendingPip()
         desktopFloor.noteReturn()
         // Strip mode: the window you were in, and its app's column, go to the left end of the strip. The

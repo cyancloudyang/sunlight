@@ -63,6 +63,40 @@ final class HandoffTests: XCTestCase {
         XCTAssertNotNil(p.inPlace, "a tiled window keeps its place in its area")
     }
 
+    // MARK: Filling the screen
+
+    func testFillScreenPlanUsesVisibleFrame() {
+        let visible = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        let rect = CGRect(x: 2000, y: -1500, width: 900, height: 600)
+        let plan = Handoff.plan(.fillScreen, rect: rect, camera: Camera(), visible: visible,
+                                scale: 1, tiledArea: visible)
+        XCTAssertEqual(plan.origin, visible.origin)  // pixelAligned 后仍重合
+        // 相机把 worldRect 中心对准屏幕中心
+        XCTAssertEqual(plan.camera.center(viewSize: visible.size).x, rect.midX, accuracy: 1)
+        XCTAssertEqual(plan.camera.center(viewSize: visible.size).y, rect.midY, accuracy: 1)
+    }
+
+    func testOutcomeAbortsWhenWindowGone() {
+        XCTAssertEqual(Handoff.outcome(windowAlive: false), .abortedWindowGone)
+        XCTAssertEqual(Handoff.outcome(windowAlive: true), .completed)
+    }
+
+    func testSeamUsesActualFrameNotRequested() {
+        let requested = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        let clamped = CGRect(x: 0, y: 25, width: 1024, height: 640)
+        XCTAssertEqual(Handoff.seamRect(actualFrame: clamped, requested: requested), clamped)
+    }
+
+    func testFlightRectClampsAtTheEnds() {
+        let from = CGRect(x: 0, y: 0, width: 100, height: 50)
+        let to = CGRect(x: 100, y: 100, width: 200, height: 100)
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: 0), from)
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: 1), to)
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: 0.5), CGRect(x: 50, y: 50, width: 150, height: 75))
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: 1.1), to, "the spring overshoots; the rect must not breathe past full")
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: -0.1), from)
+    }
+
     // MARK: The camera
 
     func testTheCameraShowsTheWindowAtItsOrigin() {

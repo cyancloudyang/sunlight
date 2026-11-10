@@ -364,6 +364,8 @@ final class CanvasView: NSView {
         let path: CameraPath
         let spring: Spring   // progress along the path, as offset from 1
         let start: CFTimeInterval
+        /// Rides the same spring, for a proxy growing to the screen (or shrinking home) with the camera.
+        let step: ((CGFloat) -> Void)?
         let completion: (() -> Void)?
     }
     private var flight: Flight?
@@ -1280,8 +1282,9 @@ final class CanvasView: NSView {
 
     /// Flies to a camera along a pan-and-zoom path, driven by a spring that overshoots a little and
     /// settles. Calling it mid-flight re-aims from where the camera is, keeping its speed, so walking
-    /// the switcher quickly stays one fluid move instead of restarting at every step.
-    func fly(to target: Camera, completion: (() -> Void)? = nil) {
+    /// the switcher quickly stays one fluid move instead of restarting at every step. `step` rides the
+    /// same spring (the focus flight's proxy growing with the camera); it is not called on interrupt.
+    func fly(to target: Camera, step: ((CGFloat) -> Void)? = nil, completion: (() -> Void)? = nil) {
         var speed: CGFloat = 0   // along the path, in the path's own units per second
         if let f = flight {
             let (x, v) = f.spring.evaluate(at: CGFloat(CACurrentMediaTime() - f.start))
@@ -1296,12 +1299,13 @@ final class CanvasView: NSView {
         let path = CameraPath(from: camera, to: target, viewSize: bounds.size)
         guard path.length > 1e-4 else {
             set(camera: target)
+            step?(1)
             onFlightProgress?(1)
             completion?()
             return
         }
         flight = Flight(path: path, spring: Spring(x0: -1, v0: speed / path.length),
-                        start: CACurrentMediaTime(), completion: completion)
+                        start: CACurrentMediaTime(), step: step, completion: completion)
         startDisplayLink()
         onViewportChanged?()
     }
@@ -1318,7 +1322,7 @@ final class CanvasView: NSView {
             return
         }
         flight = Flight(path: path, spring: Spring(x0: -1, v0: 0, response: WindowSnap.response, damping: WindowSnap.damping),
-                        start: CACurrentMediaTime(), completion: completion)
+                        start: CACurrentMediaTime(), step: nil, completion: completion)
         startDisplayLink()
         onViewportChanged?()
     }
@@ -1421,12 +1425,14 @@ final class CanvasView: NSView {
             if abs(x) < 0.002, abs(v) < 0.02 {
                 camera = f.path.camera(at: 1)
                 applyCamera()
+                f.step?(1)
                 onFlightProgress?(1)
                 finishMotion()
                 f.completion?()
             } else {
                 camera = f.path.camera(at: 1 + x)
                 applyCamera()
+                f.step?(1 + x)
                 onFlightProgress?(1 + x)
             }
             return
