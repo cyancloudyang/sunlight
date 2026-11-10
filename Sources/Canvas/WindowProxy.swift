@@ -160,6 +160,11 @@ final class WindowProxy {
     /// The window's name, rendered once into a bitmap (`renderLabel`) and shown by this layer, which a
     /// zoom only moves, counter-scales and crops: a text layer re-rasterised with every width step.
     let label = CALayer()
+    /// The nameplate at the snapshot's centre — app icon and title on a dark card (`renderBanner`) —
+    /// for when the window is too small on screen to read. Counter-scaled like the label.
+    let banner = CALayer()
+    private lazy var bannerIcon: NSImage? = kind == .window ? NSRunningApplication(processIdentifier: pid)?.icon : nil
+    private var bannerRendered: (text: String, scale: CGFloat)?
     /// How a label is drawn: the ink, and whether it gets a shadow (on a picture).
     struct LabelStyle: Equatable {
         var ink: NSColor
@@ -252,7 +257,7 @@ final class WindowProxy {
     private(set) var hasFrame = false
     private var refreshing = false
     private var seamPending = false
-    private var lastZoom: CGFloat = 1
+    private(set) var lastZoom: CGFloat = 1
     /// The size the shadow path was last built for; a path is only rebuilt when the size changes.
     private var shadowSize: CGSize = .zero
     /// Until then, a size in the window list that differs from `lastRealFrame` is the list catching up
@@ -310,8 +315,39 @@ final class WindowProxy {
             layer.borderWidth = hovered || outlined ? hoverBorderWidth : 0
             if !hovered { hoveredControl = nil; pressedControl = nil }
             if hovered { paintControls() }   // the app may have come or gone to the front since
+            updateLift(animated: true)
+            layoutChrome(zoom: lastZoom)   // the name plate follows the hover at any zoom
             showControls(animated: true)
         }
+    }
+
+    /// Picked up by a drag: the shadow deepens past hover's lift, and settles back when let go.
+    var dragLifted = false {
+        didSet { if dragLifted != oldValue { updateLift(animated: true) } }
+    }
+
+    /// The shadow carries the lift — no scale, which would fight the drag and effect transforms.
+    /// Hovered reads preselected, dragged reads picked up; revealed (the real window over the proxy)
+    /// shows no shadow at all, lest it double the real one's at the seam.
+    private func updateLift(animated: Bool) {
+        let opacity: Float = revealed ? 0 : dragLifted ? 0.75 : hovered ? 0.62 : 0.5
+        let radius: CGFloat = dragLifted ? 40 : hovered ? 32 : 24
+        guard layer.shadowOpacity != opacity || layer.shadowRadius != radius else { return }
+        if animated {
+            let from = layer.presentation() ?? layer
+            let fade = CABasicAnimation(keyPath: "shadowOpacity")
+            fade.fromValue = from.shadowOpacity
+            fade.toValue = opacity
+            fade.duration = 0.12
+            layer.add(fade, forKey: "lift.opacity")
+            let spread = CABasicAnimation(keyPath: "shadowRadius")
+            spread.fromValue = from.shadowRadius
+            spread.toValue = radius
+            spread.duration = 0.12
+            layer.add(spread, forKey: "lift.radius")
+        }
+        layer.shadowOpacity = opacity
+        layer.shadowRadius = radius
     }
 
     /// Drawn with the hover border though the pointer isn't on it: bonded to the hovered window, so the
@@ -347,7 +383,7 @@ final class WindowProxy {
     /// True while the real window sits on top of this proxy. Our shadow would otherwise peek out
     /// around the real window's own shadow and double it up at the seam.
     var revealed = false {
-        didSet { layer.shadowOpacity = revealed ? 0 : 0.5 }
+        didSet { updateLift(animated: false) }
     }
 
     /// Placed where the real window is, seen through `camera`. A widget's `widget` handle names it and
@@ -384,7 +420,7 @@ final class WindowProxy {
         let noAnimation: [String: CAAction] = [
             "contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "transform": NSNull(),
             "borderWidth": NSNull(), "shadowPath": NSNull(), "opacity": NSNull(), "backgroundColor": NSNull(),
-            "shadowOpacity": NSNull(), "contentsRect": NSNull(),
+            "shadowOpacity": NSNull(), "shadowRadius": NSNull(), "contentsRect": NSNull(),
         ]
 
         layer.anchorPoint = .zero
@@ -411,6 +447,11 @@ final class WindowProxy {
         label.actions = noAnimation
         refreshLabel()
 
+        banner.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        banner.contentsScale = scale
+        banner.opacity = 0
+        banner.actions = noAnimation
+
         crop(toRealSize: info.bounds.size)
         buildControls(scale: scale)
         // No capture yet: the controller starts one once it knows the window is behind the canvas.
@@ -420,6 +461,7 @@ final class WindowProxy {
         stopCapture()
         layer.removeFromSuperlayer()
         label.removeFromSuperlayer()
+        banner.removeFromSuperlayer()
         controls.removeFromSuperlayer()
         trailingControls.removeFromSuperlayer()
     }
@@ -841,6 +883,7 @@ final class WindowProxy {
         guard !chromeStale else { return }
         chromeStale = true
         label.isHidden = true
+        banner.isHidden = true
         controls.isHidden = true
         trailingControls.isHidden = true
     }
@@ -852,6 +895,7 @@ final class WindowProxy {
         if chromeStale {
             chromeStale = false
             label.isHidden = false
+            banner.isHidden = false
             controls.isHidden = false
             trailingControls.isHidden = false
         }
@@ -862,9 +906,10 @@ final class WindowProxy {
         // (counter-scaled), fading out as you approach 1:1 where the real title bar takes over. It's no
         // wider than the window on screen, so it truncates rather than running into a neighbour's —
         // widgets side by side are narrower than their labels at most zooms.
+        let mode = labelMode(zoom: zoom)
         label.position = CGPoint(x: r.minX, y: r.maxY + 6 / zoom)
         label.transform = CATransform3DMakeScale(1 / zoom, 1 / zoom, 1)
-        let labelShown: Float = labelShown(zoom: zoom) ? 1 : 0
+        let labelShown: Float = mode == .compact ? 1 : 0
         let labelOpacity = labelShown * effect.opacity
         if label.opacity != labelOpacity { label.opacity = labelOpacity }
         if labelShown > 0 {
@@ -873,6 +918,14 @@ final class WindowProxy {
             let width = min(WindowProxy.labelMaxWidth, max(24, (apparentRect.width * zoom / 8).rounded(.down) * 8))
             if label.bounds.size.width != width { label.bounds.size.width = width }
         }
+
+        // The banner sits over the snapshot's centre, for when the window is too small to read: the
+        // unit's nameplate. Counter-scaled like the label, its bitmap drawn once per title.
+        banner.position = CGPoint(x: r.midX, y: r.midY)
+        banner.transform = CATransform3DMakeScale(1 / zoom, 1 / zoom, 1)
+        let bannerOpacity: Float = (mode == .banner ? 1 : 0) * effect.opacity
+        if banner.opacity != bannerOpacity { banner.opacity = bannerOpacity }
+        if bannerOpacity > 0 { refreshBanner() }
 
         // The controls are counter-scaled the same way, anchored at their bottom-left in CA space.
         controls.position = caRect(groupWorldRect(trailing: false, zoom: zoom)).origin
@@ -893,13 +946,21 @@ final class WindowProxy {
         effectZoom = zoom
         applyEffect()
         label.opacity = (labelShown(zoom: lastZoom) ? 1 : 0) * frame.opacity
+        banner.opacity = (labelMode(zoom: lastZoom) == .banner ? 1 : 0) * frame.opacity
     }
 
     /// Whether the label shows at this zoom: zoomed out (near 1:1 the real title bar takes over), with
     /// Settings › Canvas › Window names on, and not for a tile in Picture in Picture, whose chrome names
     /// it on hover, as a video's does.
     func labelShown(zoom: CGFloat) -> Bool {
-        zoom < 0.85 && pip == nil && Settings.showWindowLabels
+        labelMode(zoom: zoom) == .compact
+    }
+
+    /// Which nameplate the proxy wears at this zoom (`LabelPolicy`): the small title, the centre
+    /// banner, or none. Never for a tile in Picture in Picture, and only with Window names on.
+    func labelMode(zoom: CGFloat) -> LabelPolicy.Mode {
+        guard pip == nil && Settings.showWindowLabels else { return .hidden }
+        return LabelPolicy.mode(zoom: zoom, hovered: hovered)
     }
 
     /// Settings › Canvas › Window names was switched: the label comes or goes at the zoom it was laid
@@ -978,6 +1039,48 @@ final class WindowProxy {
         // One line, its box centred in the label's height, as the text layer drew it.
         let lineHeight = font.ascender - font.descender + font.leading
         (text as NSString).draw(at: CGPoint(x: 0, y: (labelHeight - lineHeight) / 2), withAttributes: attributes)
+        NSGraphicsContext.restoreGraphicsState()
+        return context.makeImage()
+    }
+
+    private func refreshBanner() {
+        let name = title.isEmpty ? appName : "\(appName) — \(title)"
+        let scale = banner.contentsScale
+        if let r = bannerRendered, r.text == name, r.scale == scale { return }
+        bannerRendered = (name, scale)
+        guard let image = WindowProxy.renderBanner(name, icon: bannerIcon, scale: scale) else { return }
+        banner.contents = image
+        banner.bounds = CGRect(x: 0, y: 0, width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+    }
+
+    /// The nameplate as a bitmap: the app's icon and the window's title on a dark card, drawn once per
+    /// title or scale, never per zoom step. Truncates at `labelMaxWidth` like the small label does.
+    nonisolated static func renderBanner(_ text: String, icon: NSImage?, scale: CGFloat) -> CGImage? {
+        let height: CGFloat = 28
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: Chrome.ink]
+        let iconSize: CGFloat = icon == nil ? 0 : 18
+        let gap: CGFloat = icon == nil ? 0 : 7
+        let textWidth = (text as NSString).size(withAttributes: attributes).width
+        let width = min(labelMaxWidth, 20 + iconSize + gap + ceil(textWidth))
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: Int((width * scale).rounded()), height: Int((height * scale).rounded()),
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        Chrome.card.setFill()
+        NSBezierPath(roundedRect: CGRect(x: 0, y: 0, width: width, height: height), xRadius: 8, yRadius: 8).fill()
+        icon?.draw(in: CGRect(x: 10, y: (height - iconSize) / 2, width: iconSize, height: iconSize))
+        let lineHeight = font.ascender - font.descender + font.leading
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        var textAttributes = attributes
+        textAttributes[.paragraphStyle] = paragraph
+        (text as NSString).draw(in: CGRect(x: 10 + iconSize + gap, y: (height - lineHeight) / 2,
+                                           width: width - 20 - iconSize - gap, height: lineHeight),
+                                withAttributes: textAttributes)
         NSGraphicsContext.restoreGraphicsState()
         return context.makeImage()
     }

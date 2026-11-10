@@ -5533,6 +5533,7 @@ final class CanvasController {
             if let p {
                 p.placedNatively(at: landedBack)
                 p.place(mapRect)
+                SelectionFeedback.pulse(on: p)   // "you are here": the ring lands with the window
             }
             self.focusReturnProxy = nil
             self.clearFocusRestore()
@@ -5721,6 +5722,9 @@ final class CanvasController {
         beginPendingPip(leaving: wasIn)
         leaveEntered(reconcile: true)
         restoreFocus(wasIn)   // a window grown to fill the screen flies back to its map place
+        // No flight home (the window wasn't grown): the ring marks it where it already is. A flight's
+        // ring waits for the landing, in restoreFocus's completion.
+        if let p = wasIn, focusReturnProxy !== p { SelectionFeedback.pulse(on: p) }
         applyPendingPip()
         desktopFloor.noteReturn()
         // Strip mode: the window you were in, and its app's column, go to the left end of the strip. The
@@ -6066,7 +6070,10 @@ final class CanvasController {
     private func noteArrived(_ created: [WindowProxy]) {
         let now = CACurrentMediaTime()
         arrivedAt = arrivedAt.filter { now - $0.value < CanvasController.arrivalWindow }
-        for p in created where p.kind == .window { arrivedAt[p.windowID] = now }
+        for p in created where p.kind == .window {
+            arrivedAt[p.windowID] = now
+            SelectionFeedback.pulse(on: p)   // the new unit's ring, over its pop-in
+        }
     }
 
     /// Whether `p` just opened and hasn't been placed or entered since. Asking takes the answer: it's

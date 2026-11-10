@@ -341,7 +341,20 @@ final class CanvasView: NSView {
     private var resizing: Resize?
     /// The edges under the pointer, as the cursor shows them.
     private var cursorEdges: Resizing.Edges = []
-    private var panning = false
+    /// The proxy the non-resize cursor was set over: the hand states differ over a window and the cloth.
+    private var cursorProxy: WindowProxy?
+    private var panning = false {
+        didSet {
+            guard panning != oldValue else { return }
+            if panning {
+                NSCursor.closedHand.set()
+            } else {
+                updateHover(at: pointerTopLeft)
+                // The hover pass may have been a no-op (same proxy, same edges): the grab still ends.
+                if cursorEdges.isEmpty { (hovered == nil ? NSCursor.openHand : NSCursor.pointingHand).set() }
+            }
+        }
+    }
     private var lastPointer: CGPoint = .zero
     private var hovered: WindowProxy?
 
@@ -717,6 +730,7 @@ final class CanvasView: NSView {
         styleLabel(proxy)
         proxiesLayer(for: proxy).addSublayer(proxy.layer)
         chromeLayer.addSublayer(proxy.label)
+        chromeLayer.addSublayer(proxy.banner)
         chromeLayer.addSublayer(proxy.controls)
         chromeLayer.addSublayer(proxy.trailingControls)
         proxy.layout(zoom: camera.zoom)
@@ -2153,11 +2167,12 @@ final class CanvasView: NSView {
         }
     }
 
-    private func setCursor(_ edges: Resizing.Edges) {
-        guard edges != cursorEdges else { return }
+    private func setCursor(_ edges: Resizing.Edges, over proxy: WindowProxy? = nil) {
+        guard edges != cursorEdges || (edges.isEmpty && cursorProxy !== proxy) else { return }
         cursorEdges = edges
+        cursorProxy = proxy
         guard !edges.isEmpty else {
-            NSCursor.arrow.set()
+            (proxy == nil ? NSCursor.openHand : NSCursor.pointingHand).set()
             return
         }
         let position: NSCursor.FrameResizePosition
@@ -2216,7 +2231,7 @@ final class CanvasView: NSView {
         setHovered(p)
         p?.hoveredControl = p?.control(at: worldPoint)
         followZoomHover(p)
-        setCursor(resizeEdges(of: p, at: screenPoint))
+        setCursor(resizeEdges(of: p, at: screenPoint), over: p)
     }
 
     /// The pointer resting on a window's green button brings its popover; off it, the popover closes
@@ -2826,6 +2841,7 @@ final class CanvasView: NSView {
                 return
             }
             d.moved = true
+            d.proxy.dragLifted = true
             // ⌘ from the first move pulls a bonded window out of its group: it goes on alone.
             if modifiers.contains(.command), !d.members.isEmpty {
                 release(d.proxy)
@@ -2870,6 +2886,7 @@ final class CanvasView: NSView {
 
     /// A moved window let go: it coasts or drops.
     private func finishDrag(_ d: Drag, modifiers: NSEvent.ModifierFlags, timestamp: TimeInterval) {
+        d.proxy.dragLifted = false
         let freely = modifiers.contains(.command)
         // A group coasts as one: its whole width bounds the coast.
         let body = ([d.proxy] + d.members.map(\.proxy)).map(\.worldRect).reduce(CGRect.null) { $0.union($1) }
