@@ -43,6 +43,7 @@ final class MenuBarPanelModel: ObservableObject {
         var saveLayout: () -> Void = {}
         var deleteLayout: (String) -> Void = { _ in }
         var toggleStrip: () -> Void = {}
+        var toggleSnapshotRotation: () -> Void = {}
         var showDesktop: () -> Void = {}
         var arrange: (Int, Int) -> Void = { _, _ in }
         var showSettings: () -> Void = {}
@@ -61,6 +62,9 @@ final class MenuBarPanelModel: ObservableObject {
     /// The ⌘Tab strip shown (`Settings.switcherOn`); off, ⌘Tab still switches without it.
     @Published var switcher = true
     @Published var stripMode = false
+    /// One snapshot refreshed every second while the map sits still (`Settings.snapshotRotation`);
+    /// off, an idle map captures nothing.
+    @Published var snapshotRotation = false
     /// The experimental flags (`Settings.arranging`, `Settings.stripModeEnabled`): off, the Tidy tile,
     /// the Arrange row and the Strip Mode switch aren't there.
     @Published var arranging = false
@@ -321,9 +325,12 @@ private struct MoreScreen: View {
             }
             Tile {
                 VStack(spacing: 2) {
-                    if model.stripModeEnabled || model.arranging {
-                        SectionLabel("Canvas")
+                    SectionLabel("Canvas")
+                    SwitchRow(title: "Rotate Snapshots", keys: nil, on: model.snapshotRotation, enabled: model.isOn) {
+                        model.snapshotRotation.toggle()
+                        model.actions.toggleSnapshotRotation()
                     }
+                    .help("Refresh one window's snapshot every second while the map is idle")
                     if model.stripModeEnabled {
                         SwitchRow(title: "Strip Mode", keys: "⌃⌥S", on: model.stripMode, enabled: model.canToggleStrip) {
                             model.stripMode.toggle()

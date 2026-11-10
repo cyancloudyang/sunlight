@@ -578,6 +578,15 @@ enum Settings {
     /// Tablecloth is a snapshot map: it never streams. Every window is a still.
     static var capturesStream: Bool { false }
 
+    private static let snapshotRotationKey = "TableclothSnapshotRotation"
+
+    /// The idle snapshot rotation: while the map sits still, one window refreshes every few ticks.
+    /// Off by default — an idle map costs nothing; turn it on for a slowly self-updating overview.
+    static var snapshotRotation: Bool {
+        get { defaults.bool(forKey: snapshotRotationKey) }
+        set { defaults.set(newValue, forKey: snapshotRotationKey) }
+    }
+
     // MARK: Capture method
 
     private static let captureMethodKey = "CanvasCaptureMethod"

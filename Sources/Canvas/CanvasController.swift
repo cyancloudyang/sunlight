@@ -401,7 +401,12 @@ final class CanvasController {
             scheduleCapturePass()
         }
         view.onViewportChanged = { [weak self] in self?.scheduleCapturePass() }
-        view.onSettle = { [weak self] in self?.snapToWindow() ?? false }
+        view.onSettle = { [weak self] in
+            guard let self else { return false }
+            let snapped = self.snapToWindow()
+            self.refresh(for: .cameraSettled)
+            return snapped
+        }
         view.onHover = { [weak self] p in if let p { self?.prefetchAX(p) } }
         view.onMoved = { [weak self] p in
             p.tile = nil   // placed by hand
@@ -1188,10 +1193,11 @@ final class CanvasController {
         heartbeatTimer = nil
     }
 
-    /// The refresh timer exists only while something in front isn't streaming: on the canvas, with
-    /// every window behind it, there is nothing for it to do.
+    /// The refresh timer exists only while the map is on screen and something on it isn't streaming:
+    /// hidden or covered, there is nothing for it to do.
     private func ensureRefreshTimer() {
         let needed = renderer == .capture && !configuringRenderer && OneShotCapture.isAvailable && !asleep
+            && window.isVisible && !canvasOccluded
             && view.proxies.contains { ($0.inFront || $0.capped) && !$0.isStreaming }
         if needed, refreshTimer == nil {
             let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -1227,6 +1233,7 @@ final class CanvasController {
             } else {
                 scheduleCapturePass()
             }
+            refresh(for: .mapShown)   // awake with the map still up: everything in view is stale
         }
     }
 
@@ -1337,6 +1344,14 @@ final class CanvasController {
         }
         pendingFitAll = fitAll
         show()
+        // The map is back: one fresh snapshot for everything in view, and the timer may run again.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.refresh(for: .mapShown)
+                self.ensureRefreshTimer()
+            }
+        }
     }
 
     /// Opened without activating it, so its windows come up behind the canvas, where the next listing
@@ -2802,20 +2817,53 @@ final class CanvasController {
     /// is working in four times a second was mostly wasted work. Its siblings in front, and the windows
     /// on the canvas shown as stills (`WindowProxy.capped`), take turns once a second, and only the ones
     /// in view. A window behind the canvas whose stream is off is simply out of sight.
+    /// Whether the map is on screen: ordered out by the summon-style hide, nothing on it can be seen.
+    private var mapIsVisible: Bool { window.isVisible }
+
+    /// What an event asks the snapshots to do, per the refresh policy — nothing while the map is hidden.
+    private func refresh(for event: RefreshPolicy.Event, primary: WindowProxy? = nil) {
+        let actions = RefreshPolicy.actions(for: event, mapVisible: mapIsVisible,
+                                            rotationEnabled: Settings.snapshotRotation, handoffInFlight: handingOff)
+        for action in actions {
+            switch action {
+            case .refreshVisible:
+                refreshVisibleSnapshots()
+            case .refreshPrimary:
+                if let p = primary ?? handoffTarget ?? activeProxy, !p.isStreaming { p.refresh(seam: handoffTarget === p) }
+            case .rotateOne:
+                break   // a tick's action; events never ask for it
+            }
+        }
+    }
+
+    private func refreshVisibleSnapshots() {
+        for p in view.proxies where p.isInView && !p.isStreaming { p.refresh() }
+    }
+
     private func refreshTick() {
         refreshTicks &+= 1
+        let actions = RefreshPolicy.actions(for: .tick, mapVisible: mapIsVisible,
+                                            rotationEnabled: Settings.snapshotRotation, handoffInFlight: handingOff)
         let primary = handoffTarget ?? activeProxy
-        // On the way in, every frame of the target is a seam frame (`OneShotCapture.capture`): the last
-        // one before the real window comes forward is what shows at 1:1, and SkyLight's came back framed
-        // differently from the window, so the window looked re-laid-out until the swap.
-        if let p = primary, p.inFront, !p.isStreaming, handoffTarget != nil || refreshTicks % 2 == 0 {
-            p.refresh(seam: handoffTarget === p)
+        for action in actions {
+            switch action {
+            case .refreshPrimary:
+                // On the way in, every frame of the target is a seam frame (`OneShotCapture.capture`): the last
+                // one before the real window comes forward is what shows at 1:1, and SkyLight's came back framed
+                // differently from the window, so the window looked re-laid-out until the swap.
+                if let p = primary, p.inFront, !p.isStreaming, handoffTarget != nil || refreshTicks % 2 == 0 {
+                    p.refresh(seam: handoffTarget === p)
+                }
+            case .rotateOne:
+                guard refreshTicks % 4 == 0 else { return }
+                let others = view.proxies.filter { ($0.inFront || $0.capped) && !$0.isStreaming && $0 !== primary && $0.isInView }
+                guard !others.isEmpty else { ensureRefreshTimer(); return }
+                refreshCursor = (refreshCursor + 1) % others.count
+                others[refreshCursor].refresh()
+            case .refreshVisible:
+                refreshVisibleSnapshots()
+            }
         }
-        guard refreshTicks % 4 == 0 else { return }
-        let others = view.proxies.filter { ($0.inFront || $0.capped) && !$0.isStreaming && $0 !== primary && $0.isInView }
-        guard !others.isEmpty else { ensureRefreshTimer(); return }
-        refreshCursor = (refreshCursor + 1) % others.count
-        others[refreshCursor].refresh()
     }
 
     /// The app's windows are about to be (or already are) in front of the canvas: no streams on them.
@@ -5584,6 +5632,7 @@ final class CanvasController {
             pendingShowDesktop = false
             beginShowDesktop()
         }
+        refresh(for: .focusReturned, primary: wasIn)   // the window just left may have changed while in it
         scheduleDiff()   // fits everything afterwards if asked to (`pendingFitAll`)
     }
 
@@ -7833,6 +7882,7 @@ final class CanvasController {
     /// The map is off the screen: nothing on it can be seen, so nothing on it refreshes.
     private func mapDidHide() {
         window.orderOut(nil)
+        ensureRefreshTimer()   // off the screen, the timer goes too
     }
 
     private func stepDownForForeignApp() {

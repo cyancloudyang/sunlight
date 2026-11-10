@@ -373,6 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self?.rebuildLayoutsMenu()
         }
         actions.toggleStrip = { [weak canvas] in canvas?.toggleStripMode() }
+        actions.toggleSnapshotRotation = { Settings.snapshotRotation.toggle() }
         actions.showDesktop = { [weak canvas] in canvas?.showDesktop() }
         actions.arrange = { [weak canvas] columns, rows in canvas?.arrange(columns: columns, rows: rows) }
         actions.showSettings = { [weak self] in self?.showSettings(nil) }
@@ -395,6 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         model.minimap = canvas?.isMinimapShown ?? Settings.showMinimap
         model.switcher = Settings.switcherOn
         model.stripMode = canvas?.isStripMode ?? Settings.stripMode
+        model.snapshotRotation = Settings.snapshotRotation
         model.arranging = Settings.arranging
         model.stripModeEnabled = Settings.stripModeEnabled
         model.showingDesktop = canvas?.isShowingDesktop ?? false
