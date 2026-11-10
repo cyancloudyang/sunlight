@@ -664,9 +664,9 @@ final class CanvasView: NSView {
             CATransaction.setDisableActions(true)  // follow the colour panel live, no cross-fade
         }
         let from = layer?.backgroundColor
-        // Deliberately not fully opaque: the window beneath is non-opaque too, which keeps the window
-        // server from marking the real windows as occluded (occluded apps throttle or stop drawing).
-        layer?.backgroundColor = background.withAlphaComponent(showsRealWindows ? 0.01 : 0.985).cgColor
+        // Fully opaque: the window server marks the real windows beneath as occluded, and occluded
+        // apps throttle or stop drawing — the map covering the desktop is what quiets them.
+        layer?.backgroundColor = background.withAlphaComponent(1.0).cgColor
         if animated, let from {
             // The view is its backing layer's delegate and gives it no implicit animations, so the fade
             // is spelled out; the text layers below pick up the transaction's on their own.

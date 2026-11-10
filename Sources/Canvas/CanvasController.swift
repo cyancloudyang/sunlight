@@ -338,8 +338,8 @@ final class CanvasController {
         container.addSubview(overlay)
         window.contentView = container
         window.initialFirstResponder = view
-        window.isOpaque = false          // keeps the windows beneath from being reported as occluded
-        window.backgroundColor = .clear
+        window.isOpaque = true           // apps the map covers are reported occluded: they stop drawing
+        window.backgroundColor = view.background
         window.hasShadow = false
         window.level = .normal           // the whole trick: an activated app's window rises above us
         window.isMovable = false
@@ -517,6 +517,7 @@ final class CanvasController {
                 }
                 self.scheduleCapturePass()
                 self.updateMinimap()
+                self.hideMapForForeignFront()
             }
         }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
@@ -526,6 +527,7 @@ final class CanvasController {
                 if let self, let pid, self.isScaledUseActivation(pid) { self.usedScaledPIDs.insert(pid) }
                 self?.scheduleCapturePass(after: 0.05)
                 self?.scheduleDiff(after: 0.3)
+                self?.hideMapForForeignFront()
             }
         }
         // The system says when the desktop changed; the 1 s listing is the fallback, not the way.
@@ -7810,6 +7812,29 @@ final class CanvasController {
     /// An app came forward by itself with a window on this display, while the canvas stood up for
     /// another display's: the live windows go back first, under that app's, as they do when Sunlight
     /// steps aside (`suspendRealWindows`).
+    /// The map steps off the screen when another app takes the front, so the real desktop shows; the
+    /// hotkey or the Mission Control key brings it back (`show`). Apps the canvas keeps behind it — a
+    /// launch, a layout restore, one sent straight back, the app macOS picks after a close — don't
+    /// count as taking the front. Only once Sunlight has actually resigned: an activation reported
+    /// while it is still active is answered by `foreignActivation`.
+    private func hideMapForForeignFront() {
+        guard !NSApp.isActive, !paused, !staysUp, activeProxy == nil, addingWidgets == nil, !isSetupShowing else { return }
+        let front = NSWorkspace.shared.frontmostApplication
+        guard SummonPolicy.hidesOnResign(frontIsSelf: front?.processIdentifier == myPID, handoffInFlight: handingOff) else { return }
+        if let front {
+            let pid = front.processIdentifier
+            guard pid != expectedActivationPID, launches[pid] == nil, !Spaces.justFolded(pid),
+                  Date() >= quietAfterCloseUntil,
+                  !(restoring?.apps.contains(front.bundleIdentifier ?? "") ?? false) else { return }
+        }
+        mapDidHide()
+    }
+
+    /// The map is off the screen: nothing on it can be seen, so nothing on it refreshes.
+    private func mapDidHide() {
+        window.orderOut(nil)
+    }
+
     private func stepDownForForeignApp() {
         guard !NSApp.isActive, realWindowsPresented else { return }
         suspendRealWindows(keepingLook: true)
