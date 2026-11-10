@@ -104,7 +104,7 @@ final class MenuBarPanelModel: ObservableObject {
         switch rendering {
         case .live: return Caption(text: "On · live windows")
         case .pictures: return Caption(text: "On · screen capture")
-        case .preview: return Caption(text: "On · preview")
+        case .preview: return Caption(text: "On · snapshots")
         }
     }
 

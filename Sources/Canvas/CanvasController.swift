@@ -152,12 +152,6 @@ final class CanvasController {
     /// Brings the addition back when the Dock restarts, which unloads it.
     private let reloader = AdditionReloader()
     private var reloading = false
-    /// Preview mode's badge in the canvas's bottom-left (`Settings.previewMode`), while the renderer is capture.
-    private var previewBadge: PreviewBadge?
-    /// A preview was seen this launch, so the first live windows deserve a word.
-    private var previewShown = false
-    /// The demo mode card's Use Full Version: Set Up Sunlight, at the live-windows steps.
-    var onSetUp: (() -> Void)?
     /// ⌘? through the key tap (`KeyTap.Command.howToUse`): Settings › How to use.
     var onHowToUse: (() -> Void)?
     /// The setup window is asking for Screen Recording at launch: the capture fallback doesn't also
@@ -565,7 +559,6 @@ final class CanvasController {
                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.placeMinimap()
-                self?.placePreviewBadge()
                 self?.scheduleDiff(after: 0.5)
             }
         }
@@ -817,52 +810,8 @@ final class CanvasController {
 
     // MARK: Preview mode
 
-    /// The badge and the first-live toast follow the renderer: the badge while it's capture in preview
-    /// mode; and the first time live windows answer on this Mac, preview mode is over for good.
     private func rendererSettled() {
         if isLead, !configuringRenderer { desk?.leadRendererSettled() }
-        if renderer == .realWindows, !Settings.liveWindowsEverLoaded {
-            Settings.liveWindowsEverLoaded = true
-            Log.note("Rendering: live windows loaded for the first time on this Mac; preview mode is over")
-            // Only after a preview was seen this launch: an upgrade already on live windows says nothing.
-            if previewShown { CanvasToast.show("This is the real thing: your live windows.", in: overlay) }
-        }
-        updatePreviewBadge()
-    }
-
-    private func updatePreviewBadge() {
-        let wanted = renderer == .capture && !configuringRenderer && Settings.previewMode
-        if wanted {
-            if previewBadge == nil {
-                let badge = PreviewBadge()
-                badge.onGoLive = { [weak self] in self?.onSetUp?() }
-                overlay.addSubview(badge)
-                previewBadge = badge
-                previewShown = true
-            }
-            placePreviewBadge()
-        } else if let badge = previewBadge {
-            badge.removeFromSuperview()
-            previewBadge = nil
-        }
-    }
-
-    /// Bottom-left, inside the Dock when it's showing (the minimap has bottom-right), and out of the
-    /// ⌘Tab strip's way while it shows, like the minimap.
-    private func placePreviewBadge(animated: Bool = false) {
-        guard let badge = previewBadge else { return }
-        var frame = badge.frame(in: visibleTopLeft)
-        if let strip = switcherHUD.activeLayout { frame = strip.clearing(frame) }
-        guard frame != badge.frame else { return }
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.15
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                badge.animator().frame = frame
-            }
-        } else {
-            badge.frame = frame
-        }
     }
 
     /// Takeover is about to restart the Dock: hand every window back first. A lease the Dock dies
@@ -7418,7 +7367,6 @@ final class CanvasController {
         switcherHUD.show(entries, app: s.appIndex, window: s.windowIndex, edge: Settings.switcherEdge,
                          area: visibleTopLeft, in: overlay)
         placeMinimap(animated: true)
-        placePreviewBadge(animated: true)
     }
 
     /// A step through the cycle: across apps (Tab, ⌘← ⌘→) or along an app's windows (⌘`, ⌘↑ ⌘↓).
@@ -7524,7 +7472,6 @@ final class CanvasController {
         if switcherHUD.isActive {
             switcherHUD.hide()
             placeMinimap(animated: true)
-            placePreviewBadge(animated: true)
         }
         if clearHighlight { for c in deskCanvases { c.view.highlight(nil) } }
     }
@@ -7991,7 +7938,6 @@ final class CanvasController {
         lastFrame = nil
         parked.removeAll()
         placeMinimap()
-        placePreviewBadge()
         scheduleDiff(after: 0.3)
     }
 

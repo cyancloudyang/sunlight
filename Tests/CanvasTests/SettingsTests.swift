@@ -2,6 +2,19 @@ import XCTest
 @testable import Canvas
 
 final class SettingsTests: XCTestCase {
+    func testRendererIsAlwaysCapture() async {
+        await MainActor.run {
+            XCTAssertEqual(Settings.renderer, .capture)
+        }
+    }
+
+    func testNeverStreams() async {
+        await MainActor.run {
+            XCTAssertFalse(Settings.capturesStream)
+            XCTAssertEqual(CanvasController.maxStreams, 0)
+        }
+    }
+
     func testCommandLineCanDisableLayoutPersistenceWithoutChangingSavedPreferences() async {
         await MainActor.run {
             let defaults = UserDefaults.standard

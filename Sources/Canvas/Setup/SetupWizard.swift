@@ -593,18 +593,8 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
                     self.check()
                 })
             }
-            if mac.liveWindowsSupported {
-                paragraphs.append("Your windows are on the canvas as pictures, refreshed as they change. Live windows are the real thing: smooth, instant, and with no Screen Recording needed. Setting them up takes about five minutes and one restart into Recovery. Start now, or any time from Use Full Version in the bottom-left corner of the canvas.")
-                secondary.append(action("live", "Set Up Live Windows") { [weak self] in
-                    guard let self, !self.review else { return }
-                    SetupRecord.startedLive = true
-                    journal("Live windows setup started")
-                    self.check()
-                })
-            } else {
-                paragraphs.append("Your windows are on the canvas as pictures, refreshed as they change. Live windows need Apple silicon and macOS 15 or later, so this Mac stays in preview mode.")
-            }
-            return SetupPageSpec(page: page, eyebrow: "Preview", headline: mac.liveWindowsSupported ? "You’re set. This is the preview." : "You’re set.",
+            paragraphs.append("Your windows are on the canvas as pictures, refreshed as they change.")
+            return SetupPageSpec(page: page, eyebrow: "Preview", headline: "You’re set.",
                                  paragraphs: paragraphs,
                                  primary: action("primary", "Open the Canvas") { [weak self] in self?.close() },
                                  secondary: secondary, showsIcon: true)

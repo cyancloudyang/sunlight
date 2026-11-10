@@ -20,7 +20,7 @@ final class SetupDiagnoseTests: XCTestCase {
     func testTheReportHasEverySection() {
         let report = SetupDiagnose.report(facts())
         for heading in ["Sunlight diagnose report", "Sunlight 0.1 (1), in ~/Applications/Sunlight.app", "macOS 27.2 (Build 27C101), Apple silicon, an administrator",
-                        "== Setup ==", "Setup: 4 steps left, starting with background helper.", "Progress: 2 of 6 steps", "Stage Manager: off",
+                        "== Setup ==", "Setup: Everything's set up.", "Progress: 2 of 2 steps", "Stage Manager: off",
                         "Wizard: welcomed, open at login chosen, live windows started, opens at launch", "Preview mode: on",
                         "== Renderer ==", "Sunlight live-window protocol v1: unavailable", "Effective renderer: capture",
                         "== Live-windows helper ==", "Add-on: not installed",

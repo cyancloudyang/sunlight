@@ -111,6 +111,7 @@ final class SettingsPicturesTests: XCTestCase {
         XCTAssertEqual(Tab(remembered: "trackpad"), .howToUse)
         XCTAssertEqual(Tab(remembered: "motion"), .motion)
         XCTAssertNil(Tab(remembered: "rendering"))
-        XCTAssertEqual(Tab.allCases.count, 8)
+        XCTAssertNil(Tab(remembered: "liveWindows"), "Tablecloth has no live-windows pane")
+        XCTAssertEqual(Tab.allCases.count, 7)
     }
 }

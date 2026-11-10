@@ -19,25 +19,25 @@ final class SetupStatusTests: XCTestCase {
         XCTAssertTrue(done.items.allSatisfy { $0.state == .done && $0.fix == nil })
     }
 
-    func testScreenRecordingIsntRequired() throws {
+    func testScreenRecordingIsRequired() throws {
         let noRecording = status(screenRecording: false)
-        XCTAssertTrue(noRecording.isComplete)
+        XCTAssertFalse(noRecording.isComplete)
+        XCTAssertEqual(noRecording.missing.map(\.step), [.screenRecording])
         XCTAssertEqual(try item(.screenRecording, in: noRecording).fix, .allowScreenRecording)
-        XCTAssertTrue(noRecording.summary.contains("Screen Recording"))
     }
 
-    /// A fresh Mac: the helper, then Recovery, and the steps that depend on Recovery wait rather than
-    /// offering a fix.
-    func testFreshMacStartsWithTheHelperThenRecovery() throws {
+    /// Tablecloth is a snapshot map: only the two permissions count; the live-windows steps never nag.
+    func testFreshMacNeedsOnlyThePermissions() throws {
         let fresh = status(accessibility: false, screenRecording: false, sip: false, bootArgument: false,
                            helper: .daemonNotRegistered, loaded: false)
-        XCTAssertEqual(fresh.missing.map(\.step), [.accessibility, .helper, .systemIntegrity, .bootArgument, .liveWindows])
-        XCTAssertEqual(try item(.systemIntegrity, in: fresh).fix, .showRecoverySteps)
-        XCTAssertEqual(try item(.bootArgument, in: fresh).state, .waiting)
-        XCTAssertNil(try item(.bootArgument, in: fresh).fix)
-        XCTAssertEqual(try item(.helper, in: fresh).fix, .approveHelper)
-        XCTAssertEqual(try item(.liveWindows, in: fresh).state, .waiting)
-        XCTAssertEqual(fresh.summary, "5 steps left, starting with accessibility.")
+        XCTAssertEqual(fresh.missing.map(\.step), [.accessibility, .screenRecording])
+        XCTAssertEqual(fresh.summary, "2 steps left, starting with accessibility.")
+    }
+
+    func testCompleteWithTwoPermissionsOnly() {
+        let done = status(sip: false, bootArgument: false, helper: .daemonNotRegistered, loaded: false)
+        XCTAssertTrue(done.isComplete)
+        XCTAssertTrue(done.missing.isEmpty)
     }
 
     func testBootArgumentOfferedOnceSIPIsOff() throws {

@@ -74,7 +74,6 @@ final class Desk {
 
     private func add(_ display: Display, lead: Bool) {
         let c = CanvasController(display: display, desk: self, lead: lead)
-        c.onSetUp = onSetUp
         c.onHowToUse = onHowToUse
         c.takeover = takeover
         c.permissionsAskedElsewhere = permissionsAskedElsewhere
@@ -89,7 +88,6 @@ final class Desk {
 
     // MARK: What the app sets
 
-    var onSetUp: (() -> Void)? { didSet { canvases.forEach { $0.onSetUp = onSetUp } } }
     /// ⌘? anywhere while taken over: Settings › How to use.
     var onHowToUse: (() -> Void)? { didSet { canvases.forEach { $0.onHowToUse = onHowToUse } } }
     /// A display came or went (after `reviewDisplays`).

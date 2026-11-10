@@ -36,7 +36,7 @@ final class MenuBarPanelTests: XCTestCase {
     func testNothingToDoSaysHowWindowsAreShown() {
         XCTAssertEqual(Model.caption(on: true, setup: nil, liveWindowsUnloaded: false, update: nil, rendering: .live).text, "On · live windows")
         XCTAssertEqual(Model.caption(on: true, setup: nil, liveWindowsUnloaded: false, update: nil, rendering: .pictures).text, "On · screen capture")
-        XCTAssertEqual(Model.caption(on: true, setup: nil, liveWindowsUnloaded: false, update: nil, rendering: .preview).text, "On · preview")
+        XCTAssertEqual(Model.caption(on: true, setup: nil, liveWindowsUnloaded: false, update: nil, rendering: .preview).text, "On · snapshots")
     }
 
     func testTheFirstNineLayoutsGetCommandNumbers() {

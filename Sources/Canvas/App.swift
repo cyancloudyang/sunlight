@@ -156,7 +156,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func startCanvas() {
         let canvas = Desk()
         self.canvas = canvas
-        canvas.onSetUp = { [weak self] in self?.setupController().show(startingLive: true) }
         canvas.onCustomiseBackground = { [weak self] in self?.showSettings(tab: .background) }
         canvas.onHowToUse = { [weak self] in self?.showInstructions(chapter: nil) }
         // A display more or fewer: ⌃⌥⇧ → ← are Sunlight's only while there's somewhere to move to.
@@ -690,9 +689,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func settingsController() -> SettingsWindowController? {
         guard let canvas else { return nil }
         if settings == nil {
-            settings = SettingsWindowController(background: canvas.background, onRendererChange: { [weak self] renderer in
-                self?.canvas?.configureRenderer(renderer)
-            }, onSetup: { [weak self] in self?.showSetup() })
+            settings = SettingsWindowController(background: canvas.background)
             settings?.onTryPlacing = { [weak self] scope in
                 guard let canvas = self?.canvas else { return }
                 switch scope {
@@ -705,8 +702,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 self?.settings?.close()
                 self?.setupController().showBasics()
             }
-            settings?.onReloadLiveWindows = { [weak self] in self?.reloadLiveWindows() }
-            settings?.canReloadLiveWindows = { [weak self] in self?.canvas?.canReloadLiveWindows == true }
             settings?.isTakenOver = { [weak self] in self?.takeover?.isRunning == true }
             settings?.onTakeOver = { [weak self] in self?.takeOverTheMac() }
             settings?.onRelease = { [weak self] in self?.releaseTheMac() }
@@ -736,7 +731,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func setupController() -> SetupWizardController {
         if let setup { return setup }
         let controller = SetupWizardController(mac: mac, statusProvider: { SetupStatus.current() })
-        controller.onLoadLiveWindows = { [weak self] in self?.loadLiveWindows() }
         controller.onTakeOver = { [weak self] in self?.takeover?.askForConsent() }
         controller.isTakenOver = { [weak self] in self?.takeover?.isEnabled == true }
         controller.onClose = { [weak self] in self?.askForConsentIfNeeded() }
@@ -762,9 +756,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if let uninstall { return uninstall }
         let controller = UninstallController()
         controller.onLeaveLiveWindows = { [weak self] in
-            // Capture from here on, and remembered as such: a relaunch mid-uninstall must not load the
-            // add-on back into the Dock. Settings › Live Windows brings live windows back if Sunlight stays.
-            Settings.renderer = .capture
             self?.canvas?.configureRenderer(.capture)
         }
         controller.onReleaseTakeover = { [weak self] in
@@ -805,20 +796,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 exit(0)
             }
         }
-    }
-
-    /// The setup window's load: live windows on, and the add-on loaded, asking if need be (through the
-    /// daemon when it's on, so nothing shows); a failure goes back to the window's page. The reload is
-    /// asked for whatever the canvas is doing: the wizard sends it right after a launch, while the
-    /// renderer may still be probing, and a request that only set the renderer would be refused by
-    /// preview mode's quiet path and lost.
-    private func loadLiveWindows() {
-        guard let canvas else { return }
-        if Settings.renderer != .realWindows {
-            Settings.renderer = .realWindows
-            canvas.configureRenderer(.realWindows)
-        }
-        canvas.reloadAddition(interactive: true) { [weak self] why in self?.setup?.reportLiveWindowsFailure(why) }
     }
 
     /// The desktop's widget gallery; the canvas steps aside while it's open.
