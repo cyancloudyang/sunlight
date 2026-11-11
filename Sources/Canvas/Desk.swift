@@ -298,23 +298,32 @@ final class Desk {
 
     func shutdown() { canvases.forEach { $0.shutdown() } }
 
+    /// Before quitting: a window in use goes back to where it was, on every display.
+    func prepareForTermination() { canvases.forEach { $0.prepareForTermination() } }
+
     /// Writes every display's canvas down for the next launch, as one: the windows of all of them, each
-    /// display's camera by its UUID, and last run's windows that haven't come back yet.
+    /// display's camera by its UUID, and last run's windows that haven't come back yet. A window in use is
+    /// written down where it was on the map, with the camera it was entered from: the visit's grown rect and
+    /// focus camera are a picture, not a place (`CanvasController.rememberedRect`).
     func remember() {
-        guard Settings.rememberCanvas, let leadPart = lead.rememberedPart else { return }
+        guard Settings.rememberCanvas, lead.rememberedPart != nil else { return }
         if Date() >= rememberedUntil { unclaimed = [] }
-        var proxies = leadPart.proxies
-        var groups = leadPart.groups
+        var proxies: [WindowProxy] = []
+        var groups: [CGWindowID: Int] = [:]
+        var rects: [CGWindowID: CGRect] = [:]
         var cameras: [String: Layout.DisplayCamera] = [:]
         for c in canvases {
-            cameras[c.display.uuid] = Layout.displayCamera(c.view.camera, viewSize: c.view.bounds.size)
-            guard c !== lead, let part = c.rememberedPart else { continue }
+            cameras[c.display.uuid] = Layout.displayCamera(c.rememberedCamera, viewSize: c.view.bounds.size)
+            guard let part = c.rememberedPart else { continue }
+            for p in part.proxies { rects[p.windowID] = c.rememberedRect(of: p) }
             // Group numbers count from 0 on every canvas.
             let offset = (groups.values.max() ?? -1) + 1
             proxies += part.proxies
             for (id, g) in part.groups { groups[id] = g + offset }
         }
-        var layout = Layout(name: "", proxies: proxies, camera: lead.view.camera, viewSize: lead.view.bounds.size, groups: groups)
+        var layout = Layout(name: "", proxies: proxies, camera: lead.rememberedCamera,
+                            viewSize: lead.view.bounds.size, groups: groups,
+                            frame: { rects[$0.windowID] ?? $0.worldRect })
         if canvases.count > 1 { layout.cameras = cameras }
         layout.bookmarks = bookmarks.isEmpty ? nil : bookmarks
         layout.entries = unclaimed + layout.entries

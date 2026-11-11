@@ -95,10 +95,11 @@ extension Layout {
     /// Accessibility beforehand (off the main thread); only a named layout needs them, to reopen what's gone.
     /// `groups` is the group number of each bonded window (`Grouping.saved`).
     init(name: String, proxies: [WindowProxy], camera: Camera, viewSize: CGSize, documents: [CGWindowID: String] = [:],
-         groups: [CGWindowID: Int] = [:]) {
+         groups: [CGWindowID: Int] = [:], frame: ((WindowProxy) -> CGRect)? = nil) {
         let c = camera.center(viewSize: viewSize)
         self.init(name: name, saved: Date(), center: Point(x: c.x, y: c.y), zoom: camera.zoom,
-                  entries: proxies.map { Entry($0, document: $0.kind == .window ? documents[$0.windowID] : nil, group: groups[$0.windowID]) })
+                  entries: proxies.map { Entry($0, document: $0.kind == .window ? documents[$0.windowID] : nil,
+                                                group: groups[$0.windowID], at: frame?($0)) })
     }
 
     func camera(viewSize: CGSize) -> Camera {
@@ -156,7 +157,7 @@ extension Layout {
 
 @MainActor
 extension Layout.Entry {
-    init(_ p: WindowProxy, document: String?, group: Int? = nil) {
+    init(_ p: WindowProxy, document: String?, group: Int? = nil, at rect: CGRect? = nil) {
         kind = Kind(p.kind)
         bundleID = p.bundleID
         appName = p.appName
@@ -164,7 +165,8 @@ extension Layout.Entry {
         self.document = document
         widget = p.widget?.identifier
         windowID = p.windowID
-        frame = Layout.Rect(x: p.worldRect.minX, y: p.worldRect.minY, width: p.worldRect.width, height: p.worldRect.height)
+        let placed = rect ?? p.worldRect
+        frame = Layout.Rect(x: placed.minX, y: placed.minY, width: placed.width, height: placed.height)
         polarity = p.polarity?.rawValue
         self.group = group
         pip = p.pip.map { Layout.Pip(x: $0.origin.x, y: $0.origin.y, scale: $0.scale, tucked: p.pipTucked?.rawValue) }

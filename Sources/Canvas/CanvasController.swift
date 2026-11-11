@@ -3504,8 +3504,47 @@ final class CanvasController {
     /// Writes the canvas down for the next launch: every window and widget on it, the camera, and last
     /// run's windows that haven't shown up again yet. Not before the first sync has put last run's back,
     /// which would write over them.
+    /// What's remembered of a window while it's in use: where it was on the map, not the screen it was
+    /// grown to for the flight. The grown rect is a picture for the visit — remembered as it is, the map
+    /// would come back with a full-screen window in it, and a quit mid-visit would make that permanent.
+    nonisolated static func rememberedRect(entered: Bool, sameWindow: Bool, mapRect: CGRect,
+                                           worldRect: CGRect) -> CGRect {
+        entered && sameWindow ? mapRect : worldRect
+    }
+
+    /// Likewise the camera: the one the window was entered from, to come back to. The flight leaves the
+    /// camera on the window, and that's where the map would otherwise open next time.
+    nonisolated static func rememberedCamera(entered: Bool, returnCamera: Camera?, camera: Camera) -> Camera {
+        entered ? (returnCamera ?? camera) : camera
+    }
+
+    /// The camera to write down: this canvas's, or the one the window in use was entered from.
+    var rememberedCamera: Camera {
+        CanvasController.rememberedCamera(entered: activeProxy != nil, returnCamera: focusReturnCamera,
+                                          camera: view.camera)
+    }
+
+    /// The rect to write down for a proxy: an entered window's is the one it had on the map.
+    func rememberedRect(of p: WindowProxy) -> CGRect {
+        CanvasController.rememberedRect(entered: activeProxy === p && focusSavedID == p.windowID,
+                                        sameWindow: true,
+                                        mapRect: focusMapRect ?? p.worldRect,
+                                        worldRect: p.worldRect)
+    }
+
     func remember() {
         desk?.remember()
+    }
+
+    /// On the way out with a window in use: its real window goes back where it was, so the app shows it
+    /// there next launch instead of grown to the screen (the seam grew it for the visit), and what's
+    /// remembered is the map — `rememberedRect`/`rememberedCamera` — not the visit's picture.
+    func prepareForTermination() {
+        guard let p = activeProxy, let saved = focusSavedFrame, focusSavedID == p.windowID,
+              let ax = p.ax, !ax.isFullScreen else { return }
+        Log.note("Quit: \(p.appName) — \(p.title) goes back to where it was used from")
+        ax.setPosition(saved.origin)
+        _ = ax.setSize(saved.size)
     }
 
     /// This canvas's part of the remembered canvas: its windows and widgets, bottom to top, with their
