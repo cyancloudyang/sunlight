@@ -5663,6 +5663,8 @@ final class CanvasController {
             }
         }
 
+        stepAsideWhenFront(p)   // once its app really is in front, no map shows around it
+
         if let press = passedPress {
             if press.windowID == p.windowID { deliver(press, to: p.pid) } else { passedPress = nil }
         }
@@ -6702,7 +6704,10 @@ final class CanvasController {
         if pid == expectedActivationPID {
             expectedActivationPID = 0
             expectedActivationTimeout?.cancel()
-            if let p = activeProxy, p.pid == pid { restoreShadowLooks(of: p.windowID, entered: true) }
+            if let p = activeProxy, p.pid == pid {
+                restoreShadowLooks(of: p.windowID, entered: true)
+                stepAsideForEntered(p)   // the focus landed: nothing of the map is to show around it
+            }
             return
         }
         guard let env, app.activationPolicy == .regular else { return }
@@ -8076,6 +8081,41 @@ final class CanvasController {
                   !(restoring?.apps.contains(front.bundleIdentifier ?? "") ?? false) else { return }
         }
         mapDidHide()
+    }
+
+    /// Whether the map steps off the screen once a window is in front. Off already, it stays so; kept up
+    /// for another display (`staysUp`), or covered by the widget editor or setup, it's not in the way.
+    nonisolated static func mapStepsAside(entered: Bool, staysUp: Bool, paused: Bool, otherWork: Bool,
+                                          visible: Bool) -> Bool {
+        entered && !staysUp && !paused && !otherWork && visible
+    }
+
+    /// The window's app is in front, as asked: the map steps off. Told, not inferred — `hideMapForForeignFront`
+    /// wants no `activeProxy`, and an entered window has one, so the map would stay on the screen around a
+    /// window that doesn't fill it (a fixed-size one, or one Accessibility clamps) for the whole visit.
+    private func stepAsideForEntered(_ p: WindowProxy) {
+        guard CanvasController.mapStepsAside(entered: true, staysUp: staysUp, paused: paused,
+                                            otherWork: addingWidgets != nil || isSetupShowing,
+                                            visible: window.isVisible) else { return }
+        Log.note("Handoff: \(p.appName) — \(p.title) is in front; the map steps off the screen")
+        mapDidHide()
+    }
+
+    /// The focus lands a moment after it's asked for: from the moment its app is the front one, the map
+    /// steps off. Watched here as well as in `foreignActivation`, which needs the window watcher — no
+    /// Accessibility, no callbacks — and the map would then stay on the screen around the window (#3).
+    private func stepAsideWhenFront(_ p: WindowProxy, tries: Int = 0) {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == p.pid {
+            stepAsideForEntered(p)
+            return
+        }
+        guard tries < 6, activeProxy === p else { return }   // a second, then it's not this visit's business
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak p] in
+            MainActor.assumeIsolated {
+                guard let self, let p, self.activeProxy === p else { return }
+                self.stepAsideWhenFront(p, tries: tries + 1)
+            }
+        }
     }
 
     /// The map is off the screen: nothing on it can be seen, so nothing on it refreshes.

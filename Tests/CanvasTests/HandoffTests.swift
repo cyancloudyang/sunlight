@@ -170,3 +170,39 @@ final class HandoffTests: XCTestCase {
         XCTAssertEqual(global.toScreen(CGPoint(x: 100, y: 200)), display, "the view's top-left is the display's origin")
     }
 }
+
+/// Entering a window leaves the map behind it: an opaque canvas is still on the screen around a window
+/// that doesn't fill it — a fixed-size one, or one Accessibility clamps — unless it's taken off (#3).
+/// `hideMapForForeignFront` can't be the one to do it: it wants no `activeProxy`, and an entered window
+/// has one.
+final class MapStepsAsideTests: XCTestCase {
+    func testTheMapStepsOffOnceAWindowIsInFront() {
+        XCTAssertTrue(CanvasController.mapStepsAside(entered: true, staysUp: false, paused: false,
+                                                      otherWork: false, visible: true))
+    }
+
+    func testTheMapStaysUpForAnotherDisplay() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: true, staysUp: true, paused: false,
+                                                       otherWork: false, visible: true))
+    }
+
+    func testTheMapStaysUpWhenOffInTheMenuBar() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: true, staysUp: false, paused: true,
+                                                       otherWork: false, visible: true))
+    }
+
+    func testTheMapStaysUpWithTheWidgetEditorOrSetup() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: true, staysUp: false, paused: false,
+                                                       otherWork: true, visible: true))
+    }
+
+    func testNothingHappensWithTheMapAlreadyOff() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: true, staysUp: false, paused: false,
+                                                       otherWork: false, visible: false))
+    }
+
+    func testNoWindowEnteredNoStepAside() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: false, staysUp: false, paused: false,
+                                                       otherWork: false, visible: true))
+    }
+}
