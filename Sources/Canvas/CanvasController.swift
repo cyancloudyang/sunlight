@@ -192,6 +192,17 @@ final class CanvasController {
     private var focusGrownRect: CGRect?
     /// The proxy flying home under the return flight, for a cancelled flight to put back at once.
     private var focusReturnProxy: WindowProxy?
+
+    /// The handoff's wait for a frame: the app goes in front once the proxy has the picture of the size it
+    /// was just grown to, and the way back takes the frame before the window is shrunk back (#6).
+    private var handoffBarrier = CaptureBarrier()
+
+    /// Runs a step once: the barrier's frame and its deadline both reach for the same handoff step.
+    private final class Once {
+        private var step: (() -> Void)?
+        init(_ step: @escaping () -> Void) { self.step = step }
+        func run() { let s = step; step = nil; s?() }
+    }
     /// A flight into a live window: its inactive shadow look is eased towards the active one over it
     /// (`flightShadow`), so the window server's switch as the window becomes key changes nothing, and
     /// the seam shows no shadow blink (see `LiveWindowsWire.ShadowLook`).
@@ -5023,7 +5034,7 @@ final class CanvasController {
                 view.set(camera: cameraAligning(p, with: landed))
                 focusGrownRect = p.worldRect
             }
-            self.enter(p, realFrame: landed, activateApp: true)
+            self.enterAfterFrame(p, landed: landed, grown: fillsScreen)
         }
         if fillsScreen {
             let mapRect = p.worldRect
@@ -5662,7 +5673,34 @@ final class CanvasController {
             return
         }
         p.place(grown)   // where the real window was: the flight starts full screen
-        p.refresh(seam: true)   // its content as it was in use, before it shrinks back
+        // Its content as it was in use, before it shrinks back — and the restore only after that frame:
+        // restoring first shrinks the window while the proxy still shows the size it had in use.
+        let flight = Once { [weak self, weak p] in
+            guard let self, let p else { return }
+            self.flightBack(p, grown: grown, mapRect: mapRect, back: back, saved: saved)
+        }
+        switch handoffBarrier.begin(needed: p.ax != nil) {
+        case .act:
+            flight.run()
+        case .waitForFrame:
+            p.refresh(seam: true, then: { [weak self] in
+                guard let self, self.handoffBarrier.frameLanded() == .act else { return }
+                flight.run()
+            })
+            DispatchQueue.main.asyncAfter(deadline: .now() + CanvasController.handoffFrameDeadline) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.handoffBarrier.isWaiting else { return }
+                    Log.note("Focus: no frame \(CanvasController.handoffFrameDeadline)s after leaving — restoring anyway")
+                    _ = self.handoffBarrier.frameLanded()
+                    flight.run()
+                }
+            }
+        }
+    }
+
+    /// The way back's second half: the window put back where it was, and the proxy flying from the
+    /// screen-filling rect to its map place as the camera pulls back.
+    private func flightBack(_ p: WindowProxy, grown: CGRect, mapRect: CGRect, back: Camera, saved: CGRect) {
         if let ax = p.ax, !ax.isFullScreen {
             ax.setPosition(saved.origin)
             _ = ax.setSize(saved.size)
@@ -5682,6 +5720,37 @@ final class CanvasController {
             self.clearFocusRestore()
         })
     }
+
+    /// The app comes in front once the proxy has a frame of the size it was just grown to: activating
+    /// first would put the app in front showing its old picture at 1:1 for a frame, which reads as a flash.
+    /// A capture that never lands (the window closed on the way, the app didn't answer) doesn't hold it:
+    /// the deadline runs the step instead, because a handoff must not wait for ever (#6).
+    private func enterAfterFrame(_ p: WindowProxy, landed: CGRect, grown: Bool) {
+        let act = Once { [weak self, weak p] in
+            guard let self, let p, self.handoffTarget === p else { return }
+            self.enter(p, realFrame: landed, activateApp: true)
+        }
+        switch handoffBarrier.begin(needed: grown) {
+        case .act:
+            act.run()
+        case .waitForFrame:
+            p.refresh(seam: true, then: { [weak self] in
+                guard let self, self.handoffBarrier.frameLanded() == .act else { return }
+                act.run()
+            })
+            DispatchQueue.main.asyncAfter(deadline: .now() + CanvasController.handoffFrameDeadline) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.handoffBarrier.isWaiting else { return }
+                    Log.note("Handoff: no frame \(CanvasController.handoffFrameDeadline)s after the resize — in front without it")
+                    _ = self.handoffBarrier.frameLanded()
+                    act.run()
+                }
+            }
+        }
+    }
+
+    /// How long a handoff waits for the frame of the new size before going on without it.
+    nonisolated static let handoffFrameDeadline: TimeInterval = 0.3
 
     /// The moment a real window is in front of the canvas, pixel-matched to its proxy. Shared by the
     /// canvas-initiated handoff (which activates the app) and takeover's absorb (the app is already active).

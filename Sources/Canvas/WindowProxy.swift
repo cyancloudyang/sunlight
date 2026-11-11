@@ -706,13 +706,17 @@ final class WindowProxy {
     /// its stream can stay silent for a long while, and the one-shot is what the proxy has to show. `seam`
     /// asks for one even while the stream still runs (a handoff stops it a moment later) and makes sure
     /// one is taken after any capture already under way.
-    func refresh(seam: Bool = false) {
-        guard !usesRealWindow, let window else { return }
+    func refresh(seam: Bool = false, then: (() -> Void)? = nil) {
+        guard !usesRealWindow, let window else { then?(); return }
+        if let then { waitingForFrame.append(then) }
         if refreshing {
             if seam { seamPending = true }
             return
         }
-        guard seam || !isStreaming || !hasFrame else { return }   // a silent stream's proxy takes one too
+        guard seam || !isStreaming || !hasFrame else {   // a silent stream's proxy takes one too
+            flushWaitingForFrame()
+            return
+        }
         refreshing = true
         let life = captureLife
         OneShotCapture.capture(window, seam: seam) { [weak self] image in
@@ -734,7 +738,19 @@ final class WindowProxy {
                 self.seamPending = false
                 self.refresh(seam: true)
             }
+            self.flushWaitingForFrame()
         }
+    }
+
+    /// Steps waiting for a frame (the handoff's, which puts the app in front only once the proxy has the
+    /// picture of its new size). Run whenever a capture settles — with a frame, without one, or dropped
+    /// because the screen went away: none of them may leave a handoff waiting.
+    private var waitingForFrame: [() -> Void] = []
+
+    private func flushWaitingForFrame() {
+        let waiting = waitingForFrame
+        waitingForFrame = []
+        for step in waiting { step() }
     }
 
     /// Whether a frame started in `startedIn` is still wanted in `current`: the screen went away in
@@ -753,6 +769,7 @@ final class WindowProxy {
         captureLife &+= 1
         refreshing = false
         seamPending = false
+        flushWaitingForFrame()   // a step waiting on that frame runs: it can't wait for one never coming
     }
 
     /// Whether the proxy is in (or near) the viewport, as the capture pass last saw it.
