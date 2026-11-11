@@ -1,23 +1,24 @@
 # 复制以下内容给接手的 coding agent
 
-接手我的 Tablecloth 项目，延续已经批准的路线，不重新 brainstorm、不从头重做。
+接手我的 Tablecloth 项目，延续已经批准的路线，不重新 brainstorm、不从头重做 Tasks 1–8，也不重做已落地的安全修复与反馈优化。
 
-请在本地仓库 `/Users/cycloudyang/Documents/Qoder/2026-11-10/4aceb90d/sunlight` 工作。若我已迁移目录，以我提供的新路径为准；如果目录不存在或缺少下列文件，先告知我，不要只 clone 远程后继续，因为开发提交和未提交补丁尚未 push。
+请在本地仓库 `/Users/cycloudyang/Documents/Qoder/2026-11-10/4aceb90d/sunlight` 工作。若我已迁移目录，以我提供的新路径为准；如果目录不存在或缺少下列文件，先告知我。本次工作已 push 到 origin 的 tablecloth，但 `.superpowers/sdd/` 的记录与日志只在本地，优先用本地目录而不是只 clone 远程。
 
-开始前依次完整阅读：
-1. `docs/superpowers/2026-11-11-tablecloth-handoff.md`
-2. `docs/superpowers/specs/2026-11-10-tablecloth-design.md`
-3. `docs/superpowers/plans/2026-11-10-tablecloth.md`
-4. `docs/superpowers/2026-11-11-tablecloth-ledger.md`
+开始前依次完整阅读（ledger 是权威记录，本文与 handoff 只保证交接时间点状态）：
+1. `docs/superpowers/2026-11-11-tablecloth-handoff.md`（顶部"第五轮后"状态条）
+2. `docs/superpowers/2026-11-11-tablecloth-ledger.md`（全部 Ruling、取舍、代价、验证证据）
+3. `docs/superpowers/specs/2026-11-10-tablecloth-design.md`
+4. `docs/superpowers/plans/2026-11-10-tablecloth.md`
+5. `docs/superpowers/2026-11-11-tablecloth-native-feedback.md`（用户 7 条反馈原文）
 
-然后核对 git status/diff/log/remotes，并单独阅读未跟踪的 `Sources/Canvas/Takeover/CanvasInput.swift`。交接时分支为 tablecloth，HEAD 为 22e7da9475eb1844aa73746e8c897a58d8b03172；存在未完成安全补丁，当前局部测试在 App.swift 的四处残留 takeover 引用处编译失败。此前 609 项 XCTest（1 skipped、0 failures）只证明补丁之前的提交，不代表当前版本通过。保留所有现有工作，不 reset/restore/clean，不为编译通过接回 takeover。
+然后核对 `git status/diff/log/remotes`，以实际代码为准。交接时：分支 tablecloth，HEAD `7490488b37caaaac93866af60ee5181757b09d9f`，工作树干净，已全部 push 到 origin（cyancloudyang/sunlight），PR #1 OPEN/draft（https://github.com/cyancloudyang/sunlight/pull/1），未合并、未发布。最新全套 `swift test`：702 tests、1 skipped、0 failures（skip 为 DockItemTests 无 app bundle 用例）；136 条编译警告是既有 Swift 6 严格模式基线，不是本轮新增。
 
-目标已定：Sunlight fork 上的低资源快照地图；RTS 式相机、空间位置记忆、1–9 书签、平滑聚焦真实窗口/F3 返回。禁止 SIP 改动、系统进程注入、常驻 SCK/CGDisplayStream、系统偏好修改和登录项；私有 API 必须可选且有公开兜底；macOS 15+、v1 主屏；保留 MIT 署名，不复制无许可证项目代码。
+已完成：Tasks 1–8（快照地图/RTS 相机/书签/聚焦往返）、安全审查 #1–#11、用户 7 条反馈 #12–#18（提示常驻、引导按钮固定中下部、背景随相机渐模糊、手势入图拉远、opt-in 真实桌面、⌘Tab 更高弧不接管、返回地图优先窗口列表而非主线程同步 AX 帧）。
 
-请按交接文档继续修复：先完成安全入口/权限/独立输入补丁，再处理截图公开降级与 1024px 上限、聚焦状态机与持久化、隐藏/睡眠异步生命周期、分批窗口匹配、安全打包及更新配置。现有 package.sh 会打包上游 helper，修好前不要运行 make app。已有一次整分支审查，完整阻塞清单在交接文档；不重复付费跑整分支审查，直接逐项核实并修 Critical/Important，保留明确列出的 deferred minor。
+不可突破的硬约束（高于计划疏漏）：不关闭 SIP，不做任何 SIP 相关改动；不注入系统进程；CPU、GPU、内存占用尽量低；常驻捕获流（SCK stream / CGDisplayStream 一律不用）；任何"必须"的私有 API 不接受（私有 API 只允许作为有公开兜底的可选项）；不改 Dock/Finder/系统手势等任何系统偏好（无 takeover）、不做登录项；许可证边界：Sunlight（MIT）、orcv（MIT）可改编代码并署名，canvasWM、minfwm 无许可证只借鉴思路不复制代码；macOS 15+、Apple Silicon、v1 主屏；只 push origin（cyancloudyang/sunlight）的 tablecloth，绝不 push upstream（spacefarm-digital/sunlight），PR 只面向用户 fork。
 
-由你在当前会话原生实现，测试先行、确认 RED→GREEN，每组修复跑全套测试并记录结果，不只跑局部。无需 Qoder 专属工具或技能。不要自动修改系统/隐私权限；真机验证受限就说明，不能用构建成功代替交互测试，也不能虚构 CPU/GPU/内存达标。
+仍未验收（需我真机再跑，你不能替我宣称达标）：5 分钟静止 CPU/内存测量；#13/#14/#15/#16 的视觉观感（按钮落点、模糊梯度、入场拉远、⌘Tab 弧高）；#17 真实桌面系统交互（依赖系统设置启用 Show Desktop 快捷键 F11）；#18 卡顿降幅复测。deferred minor：#16 方向性运动条纹（替代真运动模糊，留真机迭代）、#12 活跃地图新窗口 noteArrived 脉冲。#18 后续性能候选（未做）：其余主线程 AXWindow.frame 同步点、listNow()/snapshot() 的 WindowList.queue.sync 阻塞 hop、主 runloop 计时器合并；handoff/seam 逻辑精密，无第二次整分支复核不宜贸然线程重构。
 
-按有意义的修复单元保存提交，保留进度与取舍；发布前核对状态和权限。只允许 push origin（cyancloudyang/sunlight）的 tablecloth，绝不 push upstream（spacefarm-digital/sunlight）；PR 也只面向用户 fork。当前尚未推送、没有 PR，不能称已发布或已验收。
+工作方式：由你在当前会话原生实现，测试先行、确认 RED→GREEN，每组改动跑全套 `swift test` 并记录结果，不只跑局部。已有一次整分支审查，不重复付费跑整分支审查；逐项核实并修 Critical/Important，保留明确列出的 deferred minor。不要自动修改系统/隐私权限；不 reset/restore/clean 未提交工作；真机验证受限就如实说明，不能用构建成功代替交互测试，也不能虚构 CPU/GPU/内存达标。测试构建需 `.build/out/Products/Debug/PackageFrameworks/Sparkle.framework` 符号链接（`swift package clean` 后需重建）。按有意义的单元提交，保留进度与取舍；发布前核对状态和权限，PR 在我验收前保持 draft。
 
-请先简短报告你从实际文件确认的状态和第一个修复点，然后开始执行；不要让我重新讲一遍需求。
+我这次想让你聚焦：______（例如：#18 后续性能候选 / 真机验收清单 / 某个 deferred minor / 其它）。若我没指定，先简短报告你从实际文件确认的状态和你建议的下一步，等我确认再动手；不要让我重新讲一遍需求。

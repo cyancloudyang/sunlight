@@ -2,6 +2,8 @@
 
 更新：2026-11-11。用户要求因 Qoder 额度有限停止实现，保存接手材料。本文记录的是**未完成、当前无法编译的开发现场**，不是发布说明。
 
+> **状态更新（2026-11-11 第五轮后，当前）**：分支 tablecloth，HEAD `7490488b37caaaac93866af60ee5181757b09d9f`，工作树干净，**已全部 push 到 origin（cyancloudyang/sunlight）**，PR #1 OPEN/draft（https://github.com/cyancloudyang/sunlight/pull/1），未合并、未发布。Tasks 1–8、安全审查 #1–#11、用户 7 条反馈 #12–#18 均已实现并各自 TDD 落地。最新全套 `swift test`：**702 tests、1 skipped、0 failures**（skip 仍为 DockItemTests 无 bundle 用例）；136 条编译警告为既有 Swift 6 严格模式基线。第五轮（反馈优化）提交 `4f37a71..7490488`：#12 提示常驻、#13 引导按钮固定中下部、#14 背景随相机渐模糊、#15 手势入图拉远、#17 opt-in 真实桌面（发系统 F11）、#16 ⌘Tab 更高弧（rho 1.6，不接管）、#18 返回地图优先窗口列表而非主线程同步 AX 帧（消除日志 1336ms 卡顿）。**仍未验收（需用户真机再跑，不虚构数字）：5 分钟静止 CPU/内存、#13/#14/#15/#16 视觉观感、#17 真实桌面系统交互、#18 卡顿降幅复测。** deferred minor：#16 方向性运动条纹、#12 活跃地图新窗口脉冲。#18 后续候选（未做）：其余主线程 AXWindow.frame 同步点、listNow/snapshot 的 WindowList.queue.sync hop、主 runloop 计时器合并。接手以 [ledger](2026-11-11-tablecloth-ledger.md) 与当前代码为准；下文第 2 节 HEAD/push 状态已更新，第 5–7 节为历史。
+>
 > **状态更新（2026-11-11 第二轮后）**：本文第 5 节描述的未编译补丁已由接手 agent（marvis）完成并分 13 个提交落地（`5c185f5..084ac6f`），审查 #1–#11 全部处理、#12 仍 deferred。Qoder 主会话已独立复核：全新 `swift test` 679 项、1 skipped、0 failures；`build/Sunlight.app` 无 Helpers/LaunchDaemons/Sparkle 键、codesign 通过且晚于最后代码提交；#1/#2/#8/#11 的关键 diff 已亲验。详见 [ledger](2026-11-11-tablecloth-ledger.md) 末尾两条记录。**仍未做：真机交互与资源实测（未验收）、发布。** 下文第 5–7 节保留为历史记录，接手者以 ledger 与当前代码为准。
 
 ## 1. 接手入口与权威顺序
@@ -20,13 +22,13 @@
 ```text
 本地仓库 /Users/cycloudyang/Documents/Qoder/2026-11-10/4aceb90d/sunlight
 分支     tablecloth
-HEAD     22e7da9475eb1844aa73746e8c897a58d8b03172
+HEAD     7490488b37caaaac93866af60ee5181757b09d9f（第五轮后；历史交接点为 22e7da9）
 基线     cf7aa16fa0035fa867529787dce02bd3d3ca5e60（Sunlight 0.2.4）
 origin   https://github.com/cyancloudyang/sunlight.git
 upstream https://github.com/spacefarm-digital/sunlight.git
 ```
 
-**本次功能提交、安全修复和交接文件都尚未 push；尚未创建 PR。只重新 clone GitHub fork 会丢失本次本地工作。** 同机请直接打开上述目录；换机请保留仓库的 `.git`、未提交/未跟踪文件，以及 `.superpowers/sdd/2026-11-10-tablecloth/` 的记录与日志。`.build` 是可重建缓存，不是源码交付物。
+**当前（第五轮后）：功能提交、安全修复、反馈优化与交接文件均已 push 到 origin 的 tablecloth（`0d54a41..7490488`），PR #1 OPEN/draft，未合并、未发布。** 同机请直接打开上述目录；换机请保留仓库的 `.git` 与 `.superpowers/sdd/2026-11-10-tablecloth/` 的记录与日志。`.build` 是可重建缓存，不是源码交付物（测试构建需 `.build/out/Products/Debug/PackageFrameworks/Sparkle.framework` 符号链接，`swift package clean` 后需重建）。
 
 不要 reset、restore、clean、覆盖未提交补丁或重建仓库来“恢复干净”。不要自动改 git config、跳过 hooks、amend 或强推。只允许 push 用户 fork 的 origin，绝不 push upstream。发布动作应遵守接手环境的权限确认要求；用户此前批准的范围仅限该 fork。
 
