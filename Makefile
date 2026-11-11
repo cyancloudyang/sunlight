@@ -54,7 +54,9 @@ status:
 	@test -x $(EXE) || $(MAKE) app
 	$(EXE) --status
 
-# Just the live-window helper, add-on and loader, into build/live-windows/.
+# The live-window helper, add-on and loader, into build/live-windows/. Tablecloth (this fork) doesn't ship
+# an injector: the scripts refuse unless ALLOW_INJECTOR=1, and scripts/package.sh rejects a bundle that
+# carries one. The snapshot map needs none of it.
 live-windows:
 	scripts/build-live-windows.sh
 

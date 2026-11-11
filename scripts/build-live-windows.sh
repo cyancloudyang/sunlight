@@ -7,6 +7,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Tablecloth fork: these pieces are the Dock add-on, its loader and the root helper that installs them —
+# injection into a system process, which this fork does not build or ship (handoff #11). The sources stay
+# as reference; nothing in the app bundle path calls this script any more (scripts/package.sh refuses a
+# bundle that carries them). Study only, and only when asked for explicitly.
+if [[ "${ALLOW_INJECTOR:-}" != "1" ]]; then
+  echo "build-live-windows.sh: the live-windows injector is not built in this fork (see handoff #11)." >&2
+  echo "  The snapshot map needs none of it. Set ALLOW_INJECTOR=1 to build it for study only." >&2
+  exit 1
+fi
+
 OUT=build/live-windows
 SRC=LiveWindows
 WARN="-Wall -Wextra -Wno-unused-parameter"
