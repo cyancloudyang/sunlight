@@ -18,4 +18,12 @@ final class ShowCanvasFitTests: XCTestCase {
         XCTAssertFalse(CanvasController.showFitsAll(requested: false, returningToMap: false))
         XCTAssertFalse(CanvasController.showFitsAll(requested: false, returningToMap: true))
     }
+
+    func testSeeAllFitsEvenFromAWindow() {
+        // The four-finger See All gesture explicitly asks for everything in view: it pulls the camera back
+        // even from a window, where a plain Mission Control return keeps the camera it was entered from.
+        XCTAssertTrue(CanvasController.showFitsAll(requested: true, returningToMap: true, seeAll: true))
+        XCTAssertTrue(CanvasController.showFitsAll(requested: true, returningToMap: false, seeAll: true))
+        XCTAssertFalse(CanvasController.showFitsAll(requested: false, returningToMap: true, seeAll: true))
+    }
 }

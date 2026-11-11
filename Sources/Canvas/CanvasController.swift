@@ -1445,14 +1445,15 @@ final class CanvasController {
     /// Whether summoning the canvas also fits everything on it. From a window the way back is the camera
     /// it was entered from — the flight the return makes — and fitting everything at the same moment cuts
     /// it and lands the user on a picture they never made (#5 in the handoff). From the map, F3 and See All
-    /// mean what they say: everything in view.
-    nonisolated static func showFitsAll(requested: Bool, returningToMap: Bool) -> Bool {
-        requested && !returningToMap
+    /// mean what they say: everything in view. An explicit See All (the four-finger gesture) fits even from
+    /// a window: it pulls the camera back so entering the map is visible, rather than reopening at 1:1.
+    nonisolated static func showFitsAll(requested: Bool, returningToMap: Bool, seeAll: Bool = false) -> Bool {
+        seeAll ? requested : (requested && !returningToMap)
     }
 
-    func showCanvas(fitAll: Bool) {
+    func showCanvas(fitAll: Bool, seeAll: Bool = false) {
         // A window is in use and Sunlight isn't up: this is the way back, and the return's camera decides.
-        let fit = CanvasController.showFitsAll(requested: fitAll, returningToMap: activeProxy != nil && !NSApp.isActive)
+        let fit = CanvasController.showFitsAll(requested: fitAll, returningToMap: activeProxy != nil && !NSApp.isActive, seeAll: seeAll)
         if fit { endShowDesktop(flyBack: false) }
         if NSApp.isActive {
             if fit { view.fitAll(animated: true) }
@@ -1654,7 +1655,7 @@ final class CanvasController {
             guard addingWidgets == nil, !isSetupShowing else { return }   // the desktop is in edit mode; Done comes back
             // A flick from a window has already brought the canvas (its drag did): it still means See
             // All, not back again. On the canvas, either gesture again goes back into the last window.
-            if fromWindow || !NSApp.isActive { showCanvas(fitAll: true) } else { toggle() }
+            if fromWindow || !NSApp.isActive { showCanvas(fitAll: true, seeAll: true) } else { toggle() }
         case .spread:
             Log.note("Pan: four-finger spread")
             showDesktop()
