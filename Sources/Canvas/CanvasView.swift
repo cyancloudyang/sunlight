@@ -1278,8 +1278,8 @@ final class CanvasView: NSView {
     var isOneToOne: Bool { abs(camera.zoom - 1) < 0.001 }
 
     /// Marks the mouse events Sunlight posts to pass a press on (`eventSourceUserData`), so the canvas
-    /// never takes one of its own for the user's.
-    static let passedOnMark: Int64 = 0x53554e4c
+    /// never takes one of its own for the user's. Read from the tap threads, so nonisolated.
+    nonisolated static let passedOnMark: Int64 = 0x53554e4c
 
     private static func isPassedOn(_ event: NSEvent) -> Bool {
         event.cgEvent?.getIntegerValueField(.eventSourceUserData) == passedOnMark
@@ -1300,7 +1300,7 @@ final class CanvasView: NSView {
     /// settles. Calling it mid-flight re-aims from where the camera is, keeping its speed, so walking
     /// the switcher quickly stays one fluid move instead of restarting at every step. `step` rides the
     /// same spring (the focus flight's proxy growing with the camera); it is not called on interrupt.
-    func fly(to target: Camera, step: ((CGFloat) -> Void)? = nil, completion: (() -> Void)? = nil) {
+    func fly(to target: Camera, rho: CGFloat = CameraPath.rho, step: ((CGFloat) -> Void)? = nil, completion: (() -> Void)? = nil) {
         var speed: CGFloat = 0   // along the path, in the path's own units per second
         if let f = flight {
             let (x, v) = f.spring.evaluate(at: CGFloat(CACurrentMediaTime() - f.start))
@@ -1312,7 +1312,7 @@ final class CanvasView: NSView {
             interruptMotion()
         }
         settleWhenStill = false
-        let path = CameraPath(from: camera, to: target, viewSize: bounds.size)
+        let path = CameraPath(from: camera, to: target, viewSize: bounds.size, rho: rho)
         guard path.length > 1e-4 else {
             set(camera: target)
             step?(1)

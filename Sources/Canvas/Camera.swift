@@ -69,8 +69,12 @@ func caRect(_ world: CGRect) -> CGRect {
 struct CameraPath {
     /// How much to pull back per unit of travel. √2 is the paper's optimum; lower is a flatter trip.
     static let rho: CGFloat = 1.1
+    /// The ⌘Tab flight's pull-back: a higher arc so even a hop to a nearby window visibly rises and lands
+    /// (the default arc barely rises for short trips). Same display-link flight, no extra GPU work.
+    static let switcherRho: CGFloat = 1.6
 
     private let viewSize: CGSize
+    private let rho: CGFloat
     private let c0: CGPoint
     private let dx: CGFloat, dy: CGFloat
     private let w0: CGFloat
@@ -80,9 +84,10 @@ struct CameraPath {
     /// Perceptual length of the trip, pan and zoom combined, in the paper's units. Zero means no move.
     let length: CGFloat
 
-    init(from: Camera, to: Camera, viewSize: CGSize) {
+    init(from: Camera, to: Camera, viewSize: CGSize, rho: CGFloat = CameraPath.rho) {
         self.viewSize = viewSize
-        let rho = CameraPath.rho, rho2 = rho * rho, rho4 = rho2 * rho2
+        self.rho = rho
+        let rho2 = rho * rho, rho4 = rho2 * rho2
         c0 = from.center(viewSize: viewSize)
         let c1 = to.center(viewSize: viewSize)
         // w is the width of the world on screen: the paper's measure of "how far out" the camera is.
@@ -111,7 +116,7 @@ struct CameraPath {
     }
 
     func camera(at t: CGFloat) -> Camera {
-        let rho = CameraPath.rho
+        let rho = self.rho
         let s = t * S
         let center: CGPoint
         let w: CGFloat

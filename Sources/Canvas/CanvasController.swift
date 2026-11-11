@@ -5136,8 +5136,9 @@ final class CanvasController {
                 p?.place(Handoff.flightRect(from: mapRect, to: grown, at: t))
             }, completion: complete)
         } else if plan.inPlace == nil, spatial || view.isFlying {
-            // A flight already under way carries its momentum into the seam.
-            view.fly(to: aligned, completion: complete)
+            // A flight already under way carries its momentum into the seam. The ⌘Tab hop rides a higher
+            // arc so it visibly flies up and lands even between nearby windows.
+            view.fly(to: aligned, rho: CameraPath.switcherRho, completion: complete)
         } else {
             var duration = move == nil && view.camera.isClose(to: aligned) ? CanvasController.stayingDuration : CanvasView.cameraDuration
             if clicked { duration = max(duration, CanvasController.clickEntryDuration) }

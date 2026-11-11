@@ -116,3 +116,8 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
   - Ruling: 恢复挂在 showNow() 漏斗（任何召唤——再分开/F11/MC 键——都先恢复系统窗口再清标志），reveal 用 mapDidHide() 停刷新丢在途帧 — 代价：real desktop 期间用户点 Dock/真窗使系统状态与 realDesktopShown 可能不同步（best-effort，opt-in，真机清单观察）。
   - Ruling: 测试 target 为 Swift 6 严格模式（生产 Canvas 模块 Swift 5），KeyTapPassthroughTests 标 @MainActor 才能读 CanvasView.passedOnMark — 代价：无。
   - 验证：ShowDesktopPolicyTests/KeyTapPassthroughTests/SettingsTests RED（compile error）→GREEN；swift test 695 tests、1 skipped、0 failures。UI 开关在 Settings›How to use›Trackpad›Show Desktop。
+- #16 完成（本轮提交）：⌘Tab 窗口间飞行用更高弧（CameraPath.switcherRho 1.6 vs 默认 1.1），近窗也明显飞起-降落。
+  - Ruling: 不接管 ⌘Tab（用户拍板"轻量飞行"），只把 spatial handoff 的 van Wijk 弧 rho 提高 — 同一 display-link 弹簧飞行，零额外 GPU/CPU；默认弧（聚焦俯冲/返回/snap）不动 — 代价：弧高观感（1.6 是否够"酷炫"又不眩晕）需真机确认，改一个常量即可。
+  - Ruling: 方向性运动条纹（cheap streak，替代真运动模糊）本轮缓做 — 纯视觉叠加层，盲调易"眩晕/啰嗦"（用户明确警告），且有 GPU 成本，与三低相悖；先交付可几何验证的飞起-降落，条纹留真机迭代 — 代价：用户期望的"运动模糊感"本轮未到位，已列 deferred。
+  - Ruling: CanvasView.passedOnMark 改 nonisolated（不可变 Sendable 常量，tap 线程本就读它）— 消除 KeyTap.passesOn 引入的 Swift 6 隔离警告；PressTap/keyHoldLimit 的既有警告非本轮引入，不顺手改（避免范围蔓延）— 代价：无。
+  - 验证：FlightArcTests 4 例 RED（extra argument rho / no member switcherRho）→GREEN；swift test 699 tests、1 skipped、0 failures。
