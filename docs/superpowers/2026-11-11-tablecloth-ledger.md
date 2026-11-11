@@ -62,3 +62,24 @@ Final review: 一次独立只读审查已完成，cf7aa16..22e7da9，41 个净�
 Final: minor (deferred): 活跃地图上的普通新窗口未走 noteArrived 脉冲反馈路径；尚未修复，不宣称该交互通过。
 Handoff current verification: swift test --filter 'SetupFlowTests|SwitcherKeysTests' → exit 1，App.swift:328/329/374/375 残留已删除 takeOverTheMac/releaseTheMac 的引用导致编译失败；测试未执行。完整日志 handoff-current-tests.log 已读取错误。旧 609-test green 仅适用于 HEAD 22e7da9、未包含当前安全补丁。
 Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11-tablecloth-prompt.md 与本 ledger 的 durable copy 2026-11-11-tablecloth-ledger.md。所有开发仍仅本地；未 push、未建 PR、未完成安全打包/真机/资源验收。
+
+## 接手后修复（2026-11-11 第二轮，本会话原生实现）
+
+起点：分支 tablecloth，HEAD 22e7da9，未提交安全补丁保留未 reset/restore/clean；App.swift 四处残留 takeOverTheMac/releaseTheMac 使局部测试失败。全部修复以 RED→GREEN 推进，每组改动后跑全套 `swift test`。
+
+- #1 Critical 完成（2e1783e、440c093）：UI 侧接管入口删除，AKAuthorizationRules/登录项/Stage Manager/系统偏好写入代码删除；`--release` 变为无操作并说明 Tablecloth 不改系统；`--status` 只读两权限。RED：SetupFlowTests/SwitcherKeysTests 编译失败 → 修复后转绿。
+- #2 完成（2e1783e）：PermissionGate 统一门控（Accessibility + Screen Recording），缺权限不出图、不取屏，撤销后可回到引导；权限只在用户主动操作时检查，不主动改系统设置。
+- #3 完成（db0ba21）：成功聚焦后隐藏地图（mapDidHide），不再留不透明层压真窗。
+- #4 完成（b898704）：聚焦期间只保存地图几何（记住 mapRect/布局），不把临时全屏 rect 写成地图位置。
+- #5 完成（640b015）：F3 返回不再依赖 takeover；返回飞行不被 fitAll 打断；新增备份召唤键（--summon-key），仅认 Mission Control 与 F3，不占系统键。
+- #6 完成（10ad677）：CaptureBarrier 在切换焦点前后等待一帧真实尺寸画面，先后向都等帧再进/再退回，0.3s deadline 兜底，避免末端夹带旧尺寸帧。
+- #7 完成（dc220d8）：所有保留帧长边上限 1024，缩略与聚焦取图分开，内存不再随 5K 窗口线性增长。
+- #8 完成（d27effa）：私有 API 全部可选（弱符号/运行时探测），缺失时走公开兜底路径（无私有 API 也能显示地图与聚焦）。
+- #9 完成（acf5f44）：隐藏/睡眠/锁屏时停 listing 与恢复计时器，丢弃上一"生命期"的在途捕获帧，唤醒后重建。
+- #10 完成（a9094b7）：RestorePlacement 每批到达时对整组 entry 与整组窗口重新匹配并纠正，到达顺序不再决定位置；用户已手动移动的窗口保持不动（>1pt 位移视为用户移动）。
+- #11 完成（e1f92b7）：package.sh 不再构建/拷贝 helper，签名前拒绝 Contents/Helpers 与 Contents/Library/LaunchDaemons，拒绝无 fork 自有公钥的 Sparkle feed；build-live-windows.sh 默认拒绝运行（需 ALLOW_INJECTOR=1），Makefile 注明。packaging/release.conf 的上游 feed/key/tap 置空 → 更新检查恒关闭（Updater 仅在 feed+key 齐备时启动）。
+- #12 Minor deferred（未修，不宣称通过）：活跃地图上普通新窗口缺 noteArrived 脉冲反馈。
+
+验证证据（本会话）：`swift test` 679 tests、1 skipped、0 failures（skip 仍为 DockItemTests.testTheAppsOwnBundleIsItsIcon：runner 无 app bundle）。`SIGN=- scripts/package.sh --app-only` 成功：build/Sunlight.app 内无 Contents/Helpers、无 Library/LaunchDaemons，Info.plist 无 SUFeedURL/SUPublicEDKey，无 entitlements，`codesign --verify --strict --deep` 通过。未运行 app、未做真机交互与 CPU/内存测量（未授予权限前不启动），因此交互验收与资源达标一律标记"未验收"。
+
+仍未做：真机若干部（权限四态、捏合/平移/书签/聚焦往返、睡眠唤醒、5 分钟 CPU/内存），push 与 PR（尚未推送，未发布）。
