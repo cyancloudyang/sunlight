@@ -3,6 +3,13 @@ import CoreGraphics
 @testable import Canvas
 
 final class CameraTests: XCTestCase {
+    func testCodablePreservesOriginAndZoom() throws {
+        let camera = Camera(origin: CGPoint(x: -1400, y: 2800), zoom: 0.25)
+        let decoded = try JSONDecoder().decode(Camera.self, from: JSONEncoder().encode(camera))
+        XCTAssertEqual(decoded.origin, CGPoint(x: -1400, y: 2800))
+        XCTAssertEqual(decoded.zoom, 0.25)
+    }
+
     func testCloseWithinAPixelOnScreen() {
         let a = Camera(origin: CGPoint(x: 100, y: 200), zoom: 1)
         XCTAssertTrue(a.isClose(to: Camera(origin: CGPoint(x: 100.4, y: 199.6), zoom: 1)))

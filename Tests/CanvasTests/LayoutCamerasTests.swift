@@ -38,4 +38,21 @@ final class LayoutCamerasTests: XCTestCase {
         let l = try JSONDecoder().decode(Layout.self, from: Data(json.utf8))
         XCTAssertNil(l.cameras)
     }
+
+    func testBookmarksWrittenDownAndReadBack() throws {
+        var l = layout()
+        l.bookmarks = ["1": Layout.DisplayCamera(center: .init(x: -400, y: 250), zoom: 0.5),
+                       "9": Layout.DisplayCamera(center: .init(x: 1200, y: -800), zoom: 0.1)]
+        let back = try JSONDecoder().decode(Layout.self, from: JSONEncoder().encode(l))
+        XCTAssertEqual(back.bookmarks, l.bookmarks)
+        XCTAssertTrue(back.sameArrangement(as: l))
+        // A bookmark saved is a change worth writing down, though nothing moved.
+        XCTAssertFalse(layout().sameArrangement(as: l))
+    }
+
+    func testALayoutFromBeforeDecodesWithoutBookmarks() throws {
+        let json = #"{"name":"","saved":0,"center":{"x":1,"y":2},"zoom":1,"entries":[]}"#
+        let l = try JSONDecoder().decode(Layout.self, from: Data(json.utf8))
+        XCTAssertNil(l.bookmarks)
+    }
 }

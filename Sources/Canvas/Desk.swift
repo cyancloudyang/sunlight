@@ -22,6 +22,7 @@ final class Desk {
     /// Last run's canvas, and the windows of it still to come back: a window goes back where it was
     /// on whichever display's canvas it turns up.
     private(set) var remembered: Layout?
+    var bookmarks: [String: Layout.DisplayCamera] = [:]
     var unclaimed: [Layout.Entry] = []
     private(set) var rememberedUntil = Date.distantPast
 
@@ -33,6 +34,7 @@ final class Desk {
     init() {
         if Settings.rememberCanvas, let last = LayoutStore.remembered {
             remembered = last
+            bookmarks = last.bookmarks ?? [:]
             unclaimed = last.entries
             rememberedUntil = Date().addingTimeInterval(CanvasController.rememberedWindow)
         }
@@ -307,6 +309,7 @@ final class Desk {
         }
         var layout = Layout(name: "", proxies: proxies, camera: lead.view.camera, viewSize: lead.view.bounds.size, groups: groups)
         if canvases.count > 1 { layout.cameras = cameras }
+        layout.bookmarks = bookmarks.isEmpty ? nil : bookmarks
         layout.entries = unclaimed + layout.entries
         LayoutStore.remember(layout)
     }

@@ -33,6 +33,8 @@ final class CanvasView: NSView {
 
     /// A double-click or ⏎: bring the window to the middle of the screen and enter it.
     var onHandoff: ((WindowProxy) -> Void)?
+    var onBookmarkSave: ((Int) -> Void)?
+    var onBookmarkJump: ((Int) -> Void)?
     /// Zoomed in or out, a click on a window that didn't become a drag: enter it at 1:1 around the clicked
     /// spot (`at`: where it was pressed, view coordinates; `offset`: where in the window, world units).
     var onClickEnter: ((_ proxy: WindowProxy, _ at: CGPoint, _ offset: CGPoint) -> Void)?
@@ -3119,6 +3121,34 @@ final class CanvasView: NSView {
             if command == .deselect { floorFocused = false }
             onFloorCommand?(command)
             return
+        }
+        if let action = BookmarkKey.action(keyCode: Int(event.keyCode), modifiers: event.modifierFlags) {
+            guard !event.isARepeat else { return }
+            switch action {
+            case .save(let number): onBookmarkSave?(number)
+            case .jump(let number): onBookmarkJump?(number)
+            }
+            return
+        }
+        if event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
+            let travel: CGVector
+            let step = 120 / (bounds.width * CanvasView.trackpadPanGain)
+            switch Int(event.keyCode) {
+            case kVK_ANSI_W, kVK_UpArrow: travel = CGVector(dx: 0, dy: step)
+            case kVK_ANSI_S, kVK_DownArrow: travel = CGVector(dx: 0, dy: -step)
+            case kVK_ANSI_A, kVK_LeftArrow: travel = CGVector(dx: step, dy: 0)
+            case kVK_ANSI_D, kVK_RightArrow: travel = CGVector(dx: -step, dy: 0)
+            case kVK_Space:
+                fitAll(animated: true)
+                noteUserMove()
+                return
+            default: travel = .zero
+            }
+            if travel != .zero {
+                trackpadPan(by: travel)
+                trackpadPanCancelled()
+                return
+            }
         }
         switch Int(event.keyCode) {
         case kVK_Escape:

@@ -17,6 +17,7 @@ struct Layout: Codable {
     /// Every display's camera, by display UUID, when there was more than one (`Desk`); `center` and `zoom`
     /// are the main display's.
     var cameras: [String: DisplayCamera]?
+    var bookmarks: [String: DisplayCamera]?
 
     /// One display's camera, as `center` and `zoom` are the main one's.
     struct DisplayCamera: Codable, Equatable {
@@ -83,7 +84,8 @@ struct Layout: Codable {
 
     /// Same windows in the same places, same camera: nothing worth writing down again.
     func sameArrangement(as other: Layout) -> Bool {
-        entries == other.entries && center == other.center && zoom == other.zoom && cameras == other.cameras
+        entries == other.entries && center == other.center && zoom == other.zoom
+            && cameras == other.cameras && bookmarks == other.bookmarks
     }
 }
 

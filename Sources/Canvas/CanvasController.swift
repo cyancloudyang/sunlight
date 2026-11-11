@@ -358,6 +358,24 @@ final class CanvasController {
         window.title = "Sunlight"
 
         view.onHandoff = { [weak self] proxy in self?.handoff(to: proxy) }
+        view.onBookmarkSave = { [weak self] number in
+            guard let self, let desk = self.desk else { return }
+            desk.bookmarks[String(number)] = Layout.displayCamera(self.view.camera, viewSize: self.view.bounds.size)
+            desk.remember()
+            CanvasToast.show("书签 \(number) 已保存", in: self.overlay)
+        }
+        view.onBookmarkJump = { [weak self] number in
+            guard let self else { return }
+            guard let saved = self.desk?.bookmarks[String(number)] else {
+                CanvasToast.show("书签 \(number) 为空", in: self.overlay)
+                return
+            }
+            let zoom = min(CanvasView.maxZoom, max(CanvasView.minZoom, saved.zoom))
+            let camera = Camera(center: CGPoint(x: saved.center.x, y: saved.center.y),
+                                zoom: zoom, viewSize: self.view.bounds.size)
+            self.view.fly(to: camera)
+            self.view.noteUserMove()
+        }
         view.onDesktopDismissed = { [weak self] in self?.endShowDesktop(flyBack: false) }
         view.desktopFloor = desktopFloor
         view.onFloorClick = { [weak self] icon, modifiers, released in self?.floorClick(icon, modifiers: modifiers, released: released) }

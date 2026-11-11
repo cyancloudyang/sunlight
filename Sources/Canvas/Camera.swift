@@ -4,7 +4,7 @@ import QuartzCore
 /// World and screen coordinates are both top-left origin (Quartz style), in points.
 /// At the identity camera the world *is* the screen, so AX / ScreenCaptureKit frames drop in unchanged.
 /// `origin` is the world point visible at the top-left corner of the screen.
-struct Camera: Equatable {
+struct Camera: Equatable, Codable {
     var origin: CGPoint
     var zoom: CGFloat
 
