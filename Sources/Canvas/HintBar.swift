@@ -1,7 +1,8 @@
 import AppKit
 
 enum HintPolicy {
-    static func shows(mapEntriesSeen: Int) -> Bool { mapEntriesSeen < 5 }
+    // The shortcuts stay on screen for as long as the map is up: the user asked to always see them.
+    static func shows(mapEntriesSeen: Int) -> Bool { true }
 }
 
 @MainActor

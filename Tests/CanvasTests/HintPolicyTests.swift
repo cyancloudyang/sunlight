@@ -2,9 +2,7 @@ import XCTest
 @testable import Canvas
 
 final class HintPolicyTests: XCTestCase {
-    func testShowsForFirstFiveEntries() {
-        for n in 0..<5 { XCTAssertTrue(HintPolicy.shows(mapEntriesSeen: n)) }
-        XCTAssertFalse(HintPolicy.shows(mapEntriesSeen: 5))
-        XCTAssertFalse(HintPolicy.shows(mapEntriesSeen: 50))
+    func testAlwaysShowsRegardlessOfEntriesSeen() {
+        for n in [0, 1, 4, 5, 50, 1000] { XCTAssertTrue(HintPolicy.shows(mapEntriesSeen: n)) }
     }
 }
