@@ -1777,7 +1777,8 @@ final class CanvasController {
         Settings.showDesktopFloor = shown
         Log.note("Desktop: the floor is \(shown ? "on" : "off")")
         for c in deskCanvases {
-            c.desktopFloor.isEnabled = shown
+            c.desktopFloor.isEnabled = DesktopFloor.enabled(show: shown,
+                                                            capturesByID: OneShotCapture.supportsWindowIDCapture)
             if shown { c.scheduleDiff() }
         }
     }

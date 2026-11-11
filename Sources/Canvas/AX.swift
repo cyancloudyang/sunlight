@@ -2,9 +2,45 @@ import AppKit
 import ApplicationServices
 
 /// Maps an AXUIElement to its CGWindowID. Private but SIP-safe and used by every macOS window manager
-/// (yabai, Amethyst, AeroSpace, Rectangle). Falls back to frame matching if it ever stops resolving.
-@_silgen_name("_AXUIElementGetWindow")
-private func _AXUIElementGetWindow(_ element: AXUIElement, _ identifier: UnsafeMutablePointer<CGWindowID>) -> AXError
+/// (yabai, Amethyst, AeroSpace, Rectangle).
+///
+/// Looked up by name, never linked: a strong link to a private symbol the system doesn't export fails at
+/// launch, and the whole app would be gone over an id. Without it a window is identified by its frame
+/// (`AXFrames` below), and the questions that can only be answered by an id go unanswered (nil) rather
+/// than guessed — an unanswered question never closes a window.
+private typealias AXUIElementGetWindow = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> Int32
+
+private let axUIElementGetWindow: AXUIElementGetWindow? = {
+    guard let handle = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_NOW),
+          let symbol = dlsym(handle, "_AXUIElementGetWindow") else { return nil }
+    return unsafeBitCast(symbol, to: AXUIElementGetWindow.self)
+}()
+
+/// Whether an element can be named by window id at all, this system or another. Every id-only question
+/// asks this first: without the id, "not one of the app's windows" and "the app didn't say" are the same
+/// answer, and only the second is true.
+var axWindowIDsAvailable: Bool { axUIElementGetWindow != nil }
+
+/// Matching a window by its frame, for when its id can't be had.
+enum AXFrames {
+    /// The index of the frame at `target`, within `tolerance` on every edge, else nil. Several candidates
+    /// — an app with two windows in the same place — take the closest.
+    static func bestMatch(_ frames: [CGRect], to target: CGRect, tolerance: CGFloat = 2) -> Int? {
+        var best: (index: Int, distance: CGFloat)?
+        for (index, frame) in frames.enumerated() {
+            let d = distance(frame, target)
+            guard d <= tolerance else { continue }
+            if best == nil || d < best!.distance { best = (index, d) }
+        }
+        return best?.index
+    }
+
+    /// How far apart two frames are, edge by edge; anything over the tolerance reads the same.
+    private static func distance(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        max(max(abs(a.minX - b.minX), abs(a.minY - b.minY)),
+            max(abs(a.width - b.width), abs(a.height - b.height)))
+    }
+}
 
 /// The queues Accessibility is talked to on. Every call is a round trip to another process, which
 /// may be busy or hung for up to the timeout; none of that belongs on the main thread. Two queues,
@@ -49,26 +85,23 @@ struct AXWindow: @unchecked Sendable {
         guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
               let windows = value as? [AXUIElement] else { return nil }
 
-        for element in windows {
-            let candidate = AXWindow(element: element, pid: pid)
-            if candidate.windowID == windowID { return candidate }
+        let candidates = windows.map { AXWindow(element: $0, pid: pid) }
+        if axWindowIDsAvailable, let match = candidates.first(where: { $0.windowID == windowID }) {
+            return match
         }
-        // Fallback: closest frame.
-        for element in windows {
-            let candidate = AXWindow(element: element, pid: pid)
-            if let f = candidate.frame,
-               abs(f.minX - approximateFrame.minX) < 2, abs(f.minY - approximateFrame.minY) < 2,
-               abs(f.width - approximateFrame.width) < 2, abs(f.height - approximateFrame.height) < 2 {
-                return candidate
-            }
-        }
-        return nil
+        // By frame: the id was missing, or the app doesn't name the window by it. Each frame is read once.
+        let framed = candidates.compactMap { candidate in candidate.frame.map { (window: candidate, frame: $0) } }
+        guard let index = AXFrames.bestMatch(framed.map(\.frame), to: approximateFrame) else { return nil }
+        return framed[index].window
     }
 
     /// The window the app is focused on, or nil if it has none yet (just launched, or a menu-bar app).
     /// Whether the app names the window among its windows; nil when it doesn't answer (busy, quitting,
     /// or with no Accessibility at all), which is never taken for a no.
     static func names(windowID: CGWindowID, pid: pid_t) -> Bool? {
+        // Without the id symbol there is no way to tell one window from another but by frame, and a frame
+        // that has just moved can't say whether the app still has this window: no answer, not a no.
+        guard axWindowIDsAvailable else { return nil }
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(application(pid, timeout: 1.0), kAXWindowsAttribute as CFString, &value) == .success,
               let windows = value as? [AXUIElement] else { return nil }
@@ -77,6 +110,9 @@ struct AXWindow: @unchecked Sendable {
 
     /// The app's windows by window ID; nil when it doesn't answer.
     static func windowsByID(pid: pid_t) -> [CGWindowID: AXWindow]? {
+        // Same as `names`: no ids means no answer. An empty dictionary here would read as "the app has no
+        // windows left" and close every dead handle's window.
+        guard axWindowIDsAvailable else { return nil }
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(application(pid, timeout: 1.0), kAXWindowsAttribute as CFString, &value) == .success,
               let windows = value as? [AXUIElement] else { return nil }
@@ -107,8 +143,9 @@ struct AXWindow: @unchecked Sendable {
     }
 
     var windowID: CGWindowID? {
+        guard let getWindow = axUIElementGetWindow else { return nil }
         var id: CGWindowID = 0
-        return _AXUIElementGetWindow(element, &id) == .success ? id : nil
+        return getWindow(element, &id) == AXError.success.rawValue ? id : nil
     }
 
     var frame: CGRect? { Watchdog.during("Accessibility: a window's frame (AXWindow.frame)") { element.frame } }

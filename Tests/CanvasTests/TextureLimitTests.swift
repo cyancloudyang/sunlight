@@ -97,3 +97,32 @@ final class StreamPixelSizeTests: XCTestCase {
         XCTAssertEqual(floor.height, 2)
     }
 }
+
+/// The public one-shot's configuration: the window at its backing size, already inside the cap, so the
+/// full-size frame is never rendered only to be scaled down a moment later.
+@MainActor
+final class SnapshotSizeTests: XCTestCase {
+    func testARetinaWindowIsCappedAtTheLimit() {
+        let size = OneShotCapture.captureSize(for: CGSize(width: 1920, height: 1080), scale: 2)
+        XCTAssertEqual(size.width, 1024)
+        XCTAssertEqual(size.height, 576)
+    }
+
+    func testASmallWindowKeepsItsBackingSize() {
+        let size = OneShotCapture.captureSize(for: CGSize(width: 400, height: 300), scale: 2)
+        XCTAssertEqual(size.width, 800)
+        XCTAssertEqual(size.height, 600)
+    }
+
+    func testANonRetinaWindowKeepsItsSize() {
+        let size = OneShotCapture.captureSize(for: CGSize(width: 400, height: 300), scale: 1)
+        XCTAssertEqual(size.width, 400)
+        XCTAssertEqual(size.height, 300)
+    }
+
+    func testADegenerateWindowStillAsksForTwoPixels() {
+        let size = OneShotCapture.captureSize(for: CGSize(width: 1, height: 1), scale: 1)
+        XCTAssertEqual(size.width, 2)
+        XCTAssertEqual(size.height, 2)
+    }
+}

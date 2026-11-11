@@ -325,10 +325,15 @@ enum OneShotCapture {
         }
     }
 
+    /// Whether a window can be captured by id, which only the private path can do: ScreenCaptureKit wants
+    /// an `SCWindow`, and the canvas has no handle for Finder's desktop. False — a build without SkyLight —
+    /// turns the features that need it off instead of letting them fail at every capture (#8).
+    static var supportsWindowIDCapture: Bool { skyLight != nil }
+
     /// One frame of a window the canvas has no ScreenCaptureKit handle for: Finder's desktop (see
     /// `DesktopFloor`), which the canvas's listings leave out. SkyLight only, whatever the setting says;
     /// nil when its symbol is missing, without Screen Recording, or when the window is gone. `backing`
-    /// asks for 2x detail.
+    /// asks for 2x detail. Callers ask `supportsWindowIDCapture` first.
     @MainActor
     static func capture(windowID: CGWindowID, backing: Bool, completion: @escaping @MainActor (CGImage?) -> Void) {
         guard skyLight != nil else {
@@ -345,26 +350,35 @@ enum OneShotCapture {
 
     // MARK: ScreenCaptureKit path
 
-    /// Captures at the window's native backing resolution, exactly as the one-shot path always has.
+    /// The one-shot's public path: `SCScreenshotManager.captureImage(contentFilter:configuration:)`, which
+    /// takes a plain `SCStreamConfiguration` and has been there since macOS 14 — so the whole deployment
+    /// range is covered without the private path, and without the macOS 26-only screenshot configuration
+    /// (whose predecessor this is). A stream configuration passed to a screenshot doesn't start a stream.
     private static func screenCaptureKitCapture(_ window: SCWindow, completion: @escaping @MainActor (CGImage?) -> Void) {
-        guard #available(macOS 26.0, *) else {
-            DispatchQueue.main.async { MainActor.assumeIsolated { completion(nil) } }
-            return
-        }
-        let c = SCScreenshotConfiguration()
-        c.showsCursor = false
-        c.ignoreShadows = true
-        c.includeChildWindows = false   // same as the stream: sheets and popovers aren't in the texture
         let filter = SCContentFilter(desktopIndependentWindow: window)
+        let config = SCStreamConfiguration()
+        let size = captureSize(for: window.frame.size, scale: CGFloat(filter.pointPixelScale))
+        config.width = size.width
+        config.height = size.height
+        config.showsCursor = false
+        config.ignoreShadowsSingleWindow = true
+        config.includeChildWindows = false   // same as the stream: sheets and popovers aren't in the texture
         let start = DispatchTime.now()
-        SCScreenshotManager.captureScreenshot(contentFilter: filter, configuration: c) { output, error in
+        SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { image, error in
             // A window that just closed fails here; the next sync removes its proxy, so don't log.
-            let image = error == nil ? output?.sdrImage.map { TextureLimit.fit($0) } : nil
+            let image = error == nil ? image.map { TextureLimit.fit($0) } : nil
             if image != nil { CaptureMetrics.record(.screenCaptureKit, ms: milliseconds(since: start)) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { completion(image) }
             }
         }
+    }
+
+    /// The size to ask ScreenCaptureKit for: the window's backing size, already inside `TextureLimit` so
+    /// the full-size frame is never rendered just to be scaled down.
+    static func captureSize(for frame: CGSize, scale: CGFloat) -> (width: Int, height: Int) {
+        let size = TextureLimit.size(for: CGSize(width: frame.width * scale, height: frame.height * scale))
+        return (max(2, Int(size.width.rounded())), max(2, Int(size.height.rounded())))
     }
 
     // MARK: SkyLight (private) path
