@@ -77,7 +77,7 @@ final class Desk {
     private func add(_ display: Display, lead: Bool) {
         let c = CanvasController(display: display, desk: self, lead: lead)
         c.onHowToUse = onHowToUse
-        c.takeover = takeover
+        c.input = input
         c.permissionsAskedElsewhere = permissionsAskedElsewhere
         c.isSetupShowing = isSetupShowing
         c.background.onCustomise = onCustomiseBackground
@@ -102,7 +102,7 @@ final class Desk {
         get { lead.onFirstSync }
         set { lead.onFirstSync = newValue }
     }
-    weak var takeover: CanvasInput? { didSet { canvases.forEach { $0.takeover = takeover } } }
+    weak var input: CanvasInput? { didSet { canvases.forEach { $0.input = input } } }
     var permissionsAskedElsewhere = false { didSet { canvases.forEach { $0.permissionsAskedElsewhere = permissionsAskedElsewhere } } }
     var isSetupShowing = false { didSet { canvases.forEach { $0.isSetupShowing = isSetupShowing } } }
 

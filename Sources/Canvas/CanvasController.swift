@@ -82,8 +82,9 @@ final class CanvasController {
     /// the drag ends (`fileDragEnded`).
     private var springDrag = false
 
-    /// Set once takeover mode exists. Its watcher and key tap only feed us while it is running.
-    weak var takeover: CanvasInput?
+    /// The independent input: its watcher and key tap only feed us while it is running, and it runs on
+    /// Accessibility alone — no takeover, no system settings.
+    weak var input: CanvasInput?
 
     /// The display this canvas covers. Its world is global coordinates like every canvas's (see `Display`);
     /// its view starts at the display's origin.
@@ -329,7 +330,7 @@ final class CanvasController {
     private var restoring: RestoringLayout?
     private var restoringTimer: Timer?
 
-    private var env: CanvasInput? { takeover?.isRunning == true ? takeover : nil }
+    private var env: CanvasInput? { input?.isRunning == true ? input : nil }
 
     init(display: Display, desk: Desk? = nil, lead: Bool = true) {
         self.display = display

@@ -219,14 +219,11 @@ final class KeyTap: @unchecked Sendable {
         let action: Action
         switch type {
         case .keyDown:
-            let command = flags.contains(.maskCommand)
-            let character = command ? KeyTap.character(of: event) : nil
-            let symbol = command ? symbol(of: event) : nil
             let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
             let timestamp = event.timestamp
             action = state.withLock { s -> Action in
-                let a = KeyTap.action(keyCode: keyCode, flags: flags, state: &s, character: character, symbol: symbol,
-                                      autorepeat: autorepeat, timestamp: timestamp)
+                let a = KeyTap.summonAction(keyCode: keyCode, flags: flags, state: &s,
+                                            autorepeat: autorepeat, timestamp: timestamp)
                 if case .pass = a {} else { s.swallowed.insert(keyCode) }
                 return a
             }
@@ -352,10 +349,19 @@ final class KeyTap: @unchecked Sendable {
         }
     }
 
+    static func summonAction(keyCode: Int64, flags: CGEventFlags, state: inout State,
+                             autorepeat: Bool = false, timestamp: UInt64 = 0) -> Action {
+        guard keyCode == missionControlKey || keyCode == 99,
+              flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty else { return .pass }
+        if autorepeat || state.missionControlDownAt != nil { return .swallow }
+        state.missionControlDownAt = timestamp
+        return .send(.missionControl)
+    }
+
     /// A key let go: its keyUp is swallowed if its keyDown was. The Mission Control key's says how long it was held.
     static func release(keyCode: Int64, state: inout State, timestamp: UInt64) -> Action {
         let wasSwallowed = state.swallowed.remove(keyCode) != nil
-        if keyCode == missionControlKey, let down = state.missionControlDownAt {
+        if (keyCode == missionControlKey || keyCode == 99), let down = state.missionControlDownAt {
             state.missionControlDownAt = nil
             let held = timestamp >= down ? TimeInterval(timestamp - down) / 1_000_000_000 : 0
             return .send(.missionControlUp(held: held))

@@ -183,11 +183,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         let input = CanvasInput(canvas: canvas)
         self.input = input
-        canvas.takeover = input
+        canvas.input = input
         installSignalHandlers()
         // The keys reach Sunlight through the tap only with Accessibility: without it there's nothing
         // to tap and no window to drive, and the wizard holds the grant.
-        if Settings.sunlightOn, PermissionGate.current().allows(.focus) { input.start() }
+        if Settings.sunlightOn, PermissionGate.current().allows(.focus) { startInput() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -195,7 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         canvas?.shutdown()
         canvas?.remember()
-        input?.stop()
+        stopInput()
         Stability.quitCleanly()
         return .terminateNow
     }
@@ -291,11 +291,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         trackpadPan?.setActive(on)
         if on {
             if let canvas, tileHotkeys.isEmpty { installHotkeys(for: canvas) }
-            if PermissionGate.current().allows(.focus) { input?.start() }
+            if PermissionGate.current().allows(.focus) { startInput() }
             canvas?.setPaused(false)
         } else {
             tileHotkeys = []
-            input?.stop()
+            stopInput()
             canvas?.setPaused(true)
         }
         menuBar?.model.isOn = on
@@ -681,13 +681,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// made in System Settings while Sunlight is running is answered here rather than at the next launch.
     private var lastGate: PermissionGate?
 
+    /// The input's own start and stop, so the menu's ⌘Tab row follows it: the tap runs only while
+    /// Accessibility is granted, and on its own rather than as part of any takeover.
+    private func startInput() {
+        input?.start()
+        menuBar?.model.inputRunning = input?.isRunning ?? false
+    }
+
+    private func stopInput() {
+        input?.stop()
+        menuBar?.model.inputRunning = false
+    }
+
     private func permissionsChanged() {
         let gate = PermissionGate.current()
         defer { lastGate = gate }
         guard let old = lastGate, old != gate else { return }
         let change = PermissionGate.Change(from: old, to: gate)
-        if change.stopInput { input?.stop() }
-        if change.startInput, Settings.sunlightOn { input?.start() }
+        if change.stopInput { stopInput() }
+        if change.startInput, Settings.sunlightOn { startInput() }
         canvas?.permissionsChanged(change)
         Log.note("Permissions: Accessibility \(gate.accessibility ? "on" : "off"), Screen Recording \(gate.screenRecording ? "on" : "off")")
     }

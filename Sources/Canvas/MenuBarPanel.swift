@@ -79,7 +79,8 @@ final class MenuBarPanelModel: ObservableObject {
     @Published var liveWindowsUnloaded = false
     /// An update Sparkle found, by version, until it's installed.
     @Published var updateVersion: String?
-    @Published var takeoverRunning = false
+    /// The independent input is running: ⌘Tab and F3 are claimed while it is.
+    @Published var inputRunning = false
     @Published var canCheckForUpdates = false
     var actions = Actions()
 
@@ -119,10 +120,9 @@ final class MenuBarPanelModel: ObservableObject {
     var canToggleStrip: Bool { canvasAvailable && !busy }
     var canShowDesktop: Bool { canvasAvailable && !busy }
     var canToggleMinimap: Bool { isOn }
-    /// ⌘Tab is only claimed while takeover's key tap runs.
-    var canToggleSwitcher: Bool { isOn && takeoverRunning }
+    /// ⌘Tab is only claimed while the independent key tap runs.
+    var canToggleSwitcher: Bool { isOn && inputRunning }
     var canReload: Bool { isOn && liveWindowsUnloaded && !setupShowing }
-    var canTakeOver: Bool { isOn && !takeoverRunning && !setupShowing }
 
     /// Under Layouts when it's folded: the count, or what to do.
     var layoutsSummary: String {
