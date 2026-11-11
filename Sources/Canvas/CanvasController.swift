@@ -5956,13 +5956,15 @@ final class CanvasController {
         if !placedAt.isClose(to: view.camera) {
             Log.note("Placement: the canvas is back at a camera other than the one \(p.appName) was entered at (zoom \(view.camera.zoom) at (\(Int(view.camera.origin.x)), \(Int(view.camera.origin.y))) vs 1 at (\(Int(placedAt.origin.x)), \(Int(placedAt.origin.y)))); its windows are read at the entry camera")
         }
-        // On the live canvas the window server is the one source of native frames, as in the listing;
-        // Accessibility only when there's no listing to read (capture mode), or it has no entry for the
-        // window (Calendar's, at times, has none either way). The snapshot is taken at the entry camera,
-        // so every frame in it is read against the camera the windows were placed at.
+        // The window server's listing is the one source of native frames, in both modes: about a
+        // millisecond, and it never waits on the app. Accessibility is only the fallback, read lazily
+        // when the listing can't place the window (no entry — Calendar's, at times — or an empty frame):
+        // a synchronous AX frame on the main thread held the return flight for the app's whole messaging
+        // timeout when it was busy (`ReturnFrame`). The snapshot is taken at the entry camera, so every
+        // frame in it is read against the camera the windows were placed at.
         let live = renderer == .realWindows
-        let listed = live || p.ax == nil ? snapshot(at: placedAt) : FrameSnapshot(frames: [:], camera: global(placedAt))
-        let frame = live ? listed[p.windowID] ?? p.ax?.frame : p.ax?.frame ?? listed[p.windowID]
+        let listed = snapshot(at: placedAt)
+        let frame = ReturnFrame.fromListing(listed[p.windowID]) ?? p.ax?.frame
         if let resting = p.pip {
             // A tile, returned to 1:1 and used there (or a window that asked to become one, `beginPendingPip`):
             // its home on the canvas stands, whatever the camera. It shrinks from where it is into its corner.

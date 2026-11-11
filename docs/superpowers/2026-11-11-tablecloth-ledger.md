@@ -121,3 +121,7 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
   - Ruling: 方向性运动条纹（cheap streak，替代真运动模糊）本轮缓做 — 纯视觉叠加层，盲调易"眩晕/啰嗦"（用户明确警告），且有 GPU 成本，与三低相悖；先交付可几何验证的飞起-降落，条纹留真机迭代 — 代价：用户期望的"运动模糊感"本轮未到位，已列 deferred。
   - Ruling: CanvasView.passedOnMark 改 nonisolated（不可变 Sendable 常量，tap 线程本就读它）— 消除 KeyTap.passesOn 引入的 Swift 6 隔离警告；PressTap/keyHoldLimit 的既有警告非本轮引入，不顺手改（避免范围蔓延）— 代价：无。
   - 验证：FlightArcTests 4 例 RED（extra argument rho / no member switcherRho）→GREEN；swift test 699 tests、1 skipped、0 failures。
+- #18 完成（本轮提交）：返回地图不再在主线程同步读 AX 帧。leaveEntered 两种渲染模式都先读窗口服务器列表（~1ms，不等 app），仅当列表无法定位（无条目/空帧）才惰性回退 AX（`ReturnFrame.fromListing(...) ?? p.ax?.frame`，`??` 右侧 autoclosure 仅在需要时求值）。直接针对日志中 1336ms 的 `AXWindow.frame` 主线程卡顿（busy Weather 返回时）。
+  - Ruling: 默认 capture 模式此前对已入场窗口直接同步读 `p.ax?.frame`（旧注释误以为 capture 模式"无列表可读"，但入场窗口此刻在屏、列表必有其帧）— 改为与 live 模式一致优先列表，AX 仅惰性兜底 — 代价：capture 返回多读一次全量列表（~1ms）换掉最坏 ~1s 的 AX IPC；空列表帧改回退 AX（此前选中后再被下游 hasSize 拒绝）属严格改进。卡顿降幅需真机复测确认（不虚构 CPU/内存数字）。
+  - Ruling: 本轮只做这一处有日志实证、低风险、可纯函数测试的卡顿修复；其余主线程 AXWindow.frame 同步点与 listNow/snapshot 的 WindowList.queue.sync 列为后续候选，不在无第二次复核下贸然做线程重构（handoff/seam 逻辑精密）— 代价：其余 510–840ms 卡顿本轮未动。
+  - 验证：ReturnFrameTests 3 例 RED（cannot find ReturnFrame）→GREEN；swift test 702 tests、1 skipped、0 failures。
