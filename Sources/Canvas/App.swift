@@ -31,6 +31,23 @@ enum CanvasApp {
                 exit(1)
             }
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--summon-key") {
+            // The backup key that summons the canvas, for keyboards where F3 doesn't reach it. A key code,
+            // no modifier; `--summon-key off` takes it away. Nothing here touches the Mac's own keys.
+            let value = CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : ""
+            if value == "off" {
+                Settings.summonBackupKey = nil
+                print("Sunlight: no backup summon key.")
+                exit(0)
+            }
+            guard let code = Int64(value), code > 0 else {
+                print("Sunlight: --summon-key takes a key code (e.g. 97 for F7) or off.")
+                exit(1)
+            }
+            Settings.summonBackupKey = code
+            print("Sunlight: the canvas answers F3, the Mission Control key and key code \(code).")
+            exit(0)
+        }
         if args.contains("--release") {
             print("Tablecloth does not change system preferences, login items or Stage Manager: nothing to release.")
             exit(0)
@@ -43,7 +60,7 @@ enum CanvasApp {
             exit(0)
         }
         if args.contains("--help") || args.contains("-h") {
-            print("Sunlight [--release | --status | --renderer-status | --diagnose | --setup-preview <scenario> | --preview-mode | --welcome-music <file.wav>]\n  --release  restore the Dock, Finder, Stage Manager and login item changed by Sunlight, then exit\n  --status   print takeover state and the current values\n  --renderer-status  check the live-window protocol without opening the canvas\n  --diagnose  print the Diagnose report: this Mac's setup, the renderer, the helper, the setup log\n  --setup-preview  show the Set Up Sunlight wizard for a made-up Mac (list: the scenarios)\n  --preview-mode  open the canvas in preview mode for this launch, even on a Mac set up for live windows\n  --welcome-music  write the wizard's welcome music to a WAV file")
+            print("Sunlight [--release | --status | --renderer-status | --diagnose | --summon-key <code|off> | --setup-preview <scenario> | --preview-mode | --welcome-music <file.wav>]\n  --summon-key  set the backup key that summons the canvas (a key code, or off)\n  --release  restore the Dock, Finder, Stage Manager and login item changed by Sunlight, then exit\n  --status   print takeover state and the current values\n  --renderer-status  check the live-window protocol without opening the canvas\n  --diagnose  print the Diagnose report: this Mac's setup, the renderer, the helper, the setup log\n  --setup-preview  show the Set Up Sunlight wizard for a made-up Mac (list: the scenarios)\n  --preview-mode  open the canvas in preview mode for this launch, even on a Mac set up for live windows\n  --welcome-music  write the wizard's welcome music to a WAV file")
             exit(0)
         }
         var reviewScenario: SetupReview.Scenario?

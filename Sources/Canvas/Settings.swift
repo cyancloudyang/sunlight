@@ -398,6 +398,28 @@ enum Settings {
     /// Posted when Settings › Canvas › Zoom level is switched: the canvas shows or hides the readout.
     static let zoomReadoutDidChange = Notification.Name("CanvasZoomReadoutDidChange")
 
+    // MARK: Summoning the canvas
+
+    private static let summonBackupKeyCode = "SummonBackupKey"
+
+    /// A second key that summons the canvas, for keyboards or setups where F3 and the Mission Control key
+    /// don't reach it (remapped, or another app's tap takes them): a key code, no modifier — as the Mac's
+    /// own key. Nil until one is set: `defaults write <bundle id> SummonBackupKey -int <code>`, or the
+    /// `--summon-key` flag. F3 keeps working either way.
+    static var summonBackupKey: Int64? {
+        get {
+            let stored = UserDefaults.standard.integer(forKey: summonBackupKeyCode)
+            return stored > 0 ? Int64(stored) : nil
+        }
+        set {
+            if let newValue, newValue > 0 {
+                UserDefaults.standard.set(Int(newValue), forKey: summonBackupKeyCode)
+            } else {
+                UserDefaults.standard.removeObject(forKey: summonBackupKeyCode)
+            }
+        }
+    }
+
     // MARK: The desktop
 
     private static let desktopFloorKey = "DesktopFloor"

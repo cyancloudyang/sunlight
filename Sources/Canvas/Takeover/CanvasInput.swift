@@ -21,7 +21,7 @@ final class CanvasInput {
     func start() {
         guard !isRunning else { return }
         isRunning = true
-        keyTap.start()
+        keyTap.start(summonKeys: KeyTap.summonKeys(backup: Settings.summonBackupKey))
         watcher.start()
     }
 

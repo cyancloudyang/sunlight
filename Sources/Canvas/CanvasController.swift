@@ -1412,13 +1412,23 @@ final class CanvasController {
     }
 
     /// Brings the canvas back from wherever the user is; optionally frames everything once it's up.
+    /// Whether summoning the canvas also fits everything on it. From a window the way back is the camera
+    /// it was entered from — the flight the return makes — and fitting everything at the same moment cuts
+    /// it and lands the user on a picture they never made (#5 in the handoff). From the map, F3 and See All
+    /// mean what they say: everything in view.
+    nonisolated static func showFitsAll(requested: Bool, returningToMap: Bool) -> Bool {
+        requested && !returningToMap
+    }
+
     func showCanvas(fitAll: Bool) {
-        if fitAll { endShowDesktop(flyBack: false) }
+        // A window is in use and Sunlight isn't up: this is the way back, and the return's camera decides.
+        let fit = CanvasController.showFitsAll(requested: fitAll, returningToMap: activeProxy != nil && !NSApp.isActive)
+        if fit { endShowDesktop(flyBack: false) }
         if NSApp.isActive {
-            if fitAll { view.fitAll(animated: true) }
+            if fit { view.fitAll(animated: true) }
             return
         }
-        pendingFitAll = fitAll
+        pendingFitAll = fit
         show()
         // The map is back: one fresh snapshot for everything in view, and the timer may run again.
         DispatchQueue.main.async { [weak self] in
