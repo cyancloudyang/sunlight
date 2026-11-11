@@ -79,10 +79,13 @@ final class WindowCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         super.init()
     }
 
-    /// The output size for a window at a level: its backing size scaled down, never below 2 px.
+    /// The output size for a window at a level: its backing size scaled down, never below 2 px, and never
+    /// over `TextureLimit`: a stream's frames are held as long as the window is on the map, and level 0
+    /// would otherwise hand a 5K window its 59 MB of pixels for a proxy a few hundred points wide.
     static func pixelSize(real: CGSize, scale: CGFloat, factor: CGFloat) -> (width: Int, height: Int) {
-        (max(2, Int((real.width * scale * factor).rounded())),
-         max(2, Int((real.height * scale * factor).rounded())))
+        let size = TextureLimit.size(for: CGSize(width: real.width * scale * factor,
+                                                 height: real.height * scale * factor))
+        return (max(2, Int(size.width.rounded())), max(2, Int(size.height.rounded())))
     }
 
     private var wanted: Configured {
@@ -264,6 +267,9 @@ final class WindowCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 /// on the window (also verified on 27.2 at 10 captures/s), so it's how a proxy stays fresh while its real
 /// window is in front of the canvas. Served roughly one at a time by the window server; keep the rate low.
 ///
+/// Every frame it returns is scaled to `TextureLimit` first: a proxy keeps it as long as the window is on
+/// the map, and nothing on the canvas shows a 5K window's worth of pixels.
+///
 /// Two paths, chosen by `Settings.captureMethod` and switchable live from the menu:
 ///   - `.screenCaptureKit`: `SCScreenshotManager` (macOS 26+), ~30 ms a call. The baseline.
 ///   - `.skyLight`: the private `SLSHWCaptureWindowList` (needs Screen Recording, already granted),
@@ -309,7 +315,7 @@ enum OneShotCapture {
         let fallback: @MainActor () -> Void = { screenCaptureKitCapture(window, completion: completion) }
         skyLightQueue.async {
             let start = DispatchTime.now()
-            let image = skyLightCapture(windowID, seam: seam)
+            let image = skyLightCapture(windowID, seam: seam).map { TextureLimit.fit($0) }
             if image != nil { CaptureMetrics.record(.skyLight, ms: milliseconds(since: start)) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -331,7 +337,7 @@ enum OneShotCapture {
         }
         skyLightQueue.async {
             let start = DispatchTime.now()
-            let image = skyLightCapture(windowID, seam: backing)
+            let image = skyLightCapture(windowID, seam: backing).map { TextureLimit.fit($0) }
             if image != nil { CaptureMetrics.record(.skyLight, ms: milliseconds(since: start)) }
             DispatchQueue.main.async { MainActor.assumeIsolated { completion(image) } }
         }
@@ -353,7 +359,7 @@ enum OneShotCapture {
         let start = DispatchTime.now()
         SCScreenshotManager.captureScreenshot(contentFilter: filter, configuration: c) { output, error in
             // A window that just closed fails here; the next sync removes its proxy, so don't log.
-            let image = error == nil ? output?.sdrImage : nil
+            let image = error == nil ? output?.sdrImage.map { TextureLimit.fit($0) } : nil
             if image != nil { CaptureMetrics.record(.screenCaptureKit, ms: milliseconds(since: start)) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { completion(image) }
