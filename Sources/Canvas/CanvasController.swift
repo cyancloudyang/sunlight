@@ -336,6 +336,15 @@ final class CanvasController {
         var parkX: CGFloat
         /// The layout's group numbers → groups on the canvas, as members arrive (`Grouping.adopt`).
         var groups: [Int: Int]
+        /// Every window this restore has seen arrive, and the entry each one holds once it's placed. The
+        /// whole set is matched again whenever a batch turns up (`RestorePlacement`), so the order the
+        /// windows come back in doesn't decide who gets which place (#10).
+        var arrivals: Set<CGWindowID> = []
+        var placed: [CGWindowID: Int] = [:]
+        /// Where the restore put each of them: a window the user has moved since is left alone.
+        var placedAt: [CGWindowID: CGPoint] = [:]
+        /// The windows this restore has already moved aside: parked once, not again on every batch.
+        var parked: Set<CGWindowID> = []
         let deadline: Date
     }
     private var restoring: RestoringLayout?
@@ -4772,29 +4781,64 @@ final class CanvasController {
         let fresh = arrived.filter { !state.known.contains($0.windowID) && proxies[$0.windowID] === $0 }
         guard !fresh.isEmpty else { return }
         state.known.formUnion(fresh.map(\.windowID))
-        let entries = state.pending.map { state.layout.entries[$0] }
-        let pairs = Layout.match(entries, fresh, document: { documents[$0.windowID] })
-        for (k, p) in pairs {
-            resize(p, to: entries[k].frame.size)
-            p.place(at: entries[k].frame.origin)
-            p.layout(zoom: view.camera.zoom)
-            applyPolarity(of: entries[k], to: p)
-            applyPip(of: entries[k], to: p)
-            if let g = entries[k].group { view.adopt(group: g, for: p, remap: &state.groups) }
+        state.arrivals.formUnion(fresh.map(\.windowID))
+
+        // The whole picture, not this batch: every entry still open and every one already given out, against
+        // every window this restore has seen — the placed ones the user hasn't moved, and the ones that just
+        // arrived. A batch matched on its own let the arrival order decide who got which place.
+        var pinned: Set<CGWindowID> = []
+        var windows: [WindowProxy] = []
+        for id in state.arrivals.sorted() {
+            guard let p = proxies[id] else { continue }
+            if state.placed[id] != nil,
+               RestorePlacement.userHasMoved(placedAt: state.placedAt[id], now: p.worldRect.origin) {
+                pinned.insert(id)   // the user's own: it keeps what it holds
+            } else {
+                windows.append(p)
+            }
+        }
+        let open = Set(state.pending).union(state.placed.values)
+        let indices = open.sorted()
+        let pairs = Layout.match(indices.map { state.layout.entries[$0] }, windows, document: { documents[$0.windowID] })
+        let pairing = pairs.map { (entry: indices[$0.entry], window: $0.proxy.windowID) }
+        let placement = RestorePlacement.reconcile(kept: state.placed, pairing: pairing, pinned: pinned)
+        var moved: [CGWindowID] = []
+        for (id, entry) in placement.moves.sorted(by: { $0.key < $1.key }) {
+            guard let p = proxies[id], state.layout.entries.indices.contains(entry) else { continue }
+            place(p, from: state.layout.entries[entry], state: &state)
+            state.placed[id] = entry
+            state.placedAt[id] = p.worldRect.origin
+            moved.append(id)
             Log.note("Layout: \(p.appName) — \(p.title) is back")
         }
-        let claimed = Set(pairs.map { state.pending[$0.entry] })
-        state.pending.removeAll { claimed.contains($0) }
+        // What the picture gives no window any more goes back to the open ones, and a window it took a place
+        // from waits for the next batch with nothing.
+        state.pending = state.layout.entries.indices.filter { !placement.filled.contains($0) }
+        state.placed = state.placed.filter { placement.filled.contains($0.value) }
         if state.policy == .moveAside {
-            let placed = Set(pairs.map(\.proxy.windowID))
-            let extras = fresh.filter { $0.kind == .window && !placed.contains($0.windowID) && state.apps.contains($0.bundleID ?? "") }
+            let placed = Set(state.placed.keys).union(pinned)
+            let extras = state.arrivals.compactMap { proxies[$0] }
+                .filter { $0.kind == .window && !placed.contains($0.windowID) && state.apps.contains($0.bundleID ?? "")
+                          && !moved.contains($0.windowID) && !state.parked.contains($0.windowID) }
             for (p, spot) in park(extras, x: &state.parkX, beside: state.layout) {
                 p.place(at: spot)
                 p.layout(zoom: view.camera.zoom)
+                state.parked.insert(p.windowID)
             }
         }
         restoring = state
         if state.pending.isEmpty { finishRestoring() }
+    }
+
+    /// One window taking its place in the layout being restored: the size it had, where it was, how it was
+    /// turned, its tile and its group.
+    private func place(_ p: WindowProxy, from entry: Layout.Entry, state: inout RestoringLayout) {
+        resize(p, to: entry.frame.size)
+        p.place(at: entry.frame.origin)
+        p.layout(zoom: view.camera.zoom)
+        applyPolarity(of: entry, to: p)
+        applyPip(of: entry, to: p)
+        if let g = entry.group { view.adopt(group: g, for: p, remap: &state.groups) }
     }
 
     private func finishRestoring() {
