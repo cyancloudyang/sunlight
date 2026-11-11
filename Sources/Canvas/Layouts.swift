@@ -132,7 +132,7 @@ extension Layout {
                       document: (WindowProxy) -> String? = { _ in nil }) -> [(entry: Int, proxy: WindowProxy)] {
         var pairs: [(entry: Int, proxy: WindowProxy)] = []
         var open = Array(entries.indices)
-        var free = proxies
+        var free = proxies.sorted { $0.windowID < $1.windowID }
 
         func pass(_ same: (Entry, WindowProxy) -> Bool) {
             open.removeAll { i in
