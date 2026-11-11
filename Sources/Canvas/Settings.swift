@@ -64,6 +64,7 @@ enum Settings {
     private static let tidyOrderKey = "TidyOrder"
     private static let panInertiaKey = "CanvasPanInertia"
     private static let seeAllGestureKey = "CanvasSeeAllGesture"
+    private static let realDesktopKey = "CanvasRealDesktop"
     private static let zoomInertiaKey = "CanvasZoomInertia"
     private static let snapToWindowsKey = "CanvasSnapToWindows"
     private static let rememberCanvasKey = "CanvasRemember"
@@ -267,6 +268,16 @@ enum Settings {
             defaults.set(newValue.rawValue, forKey: seeAllGestureKey)
             NotificationCenter.default.post(name: seeAllGestureDidChange, object: nil)
         }
+    }
+
+    /// Settings › How to use › Show Desktop: spreading four fingers (or F11) reveals the real, interactive
+    /// macOS desktop — the canvas steps aside and the system's own Show Desktop runs — instead of flying
+    /// to the canvas's desktop snapshot. Off by default: the snapshot needs nothing of the system, while
+    /// the real desktop needs Show Desktop enabled in System Settings › Keyboard › Keyboard Shortcuts ›
+    /// Mission Control (F11 by default), which the canvas posts as a key. See `ShowDesktopPolicy`.
+    static var realDesktopOnShowDesktop: Bool {
+        get { defaults.object(forKey: realDesktopKey) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: realDesktopKey) }
     }
 
     // MARK: Inertia

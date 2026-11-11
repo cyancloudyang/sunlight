@@ -97,3 +97,22 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - #11 亲验：package.sh 签名前拒绝 helper/LaunchDaemon/无 fork 公钥的 Sparkle 键；release.conf 四项置空；build-live-windows.sh 无 ALLOW_INJECTOR=1 即 exit 1。
 - #3–#6/#9/#10：CaptureBarrier、RestorePlacement 等已存在并接线，以 679 项测试（含新增用例）与第二轮 ledger 为据，未逐行复审——按既定流程不跑第二次整分支审查。
 - 结论：marvis 报告与仓库实际状态一致，无虚报。真机交互与 CPU/GPU/内存仍**未验收**；#12 仍 deferred。
+
+## 首轮真机验证与用户反馈（2026-11-11 第四轮）
+
+用户授予两权限并实际运行 app，主观评价"总体效果超过预期"。日志确认：0 streaming、双捕获路径（私有 SkyLight 13–28ms / 公开 SCK 42–104ms）、聚焦后地图隐藏、在途旧帧按 life 代次丢弃、新窗落位、Canvas.json 世界坐标+相机持久化且聚焦不污染几何。边界复核 SystemPrefs 仅只读。性能观测：主线程卡顿 6 次（510–5369ms），根因 AXWindow.frame 主线程同步往返 + listNow 同步阻塞 + 主 runloop 计时器偏多。
+
+用户 7 条反馈（详见 docs/superpowers/2026-11-11-tablecloth-native-feedback.md）：①引导 Next 按钮固定中下部 ②快捷键提示常驻 ③手势入图加拉远入场动画 ④修复四指分开进桌面 ⑤背景随相机逐渐模糊 ⑥⌘Tab 切换加飞起-降落到效果 ⑦继续性能优化。①–⑤⑦在既定边界内可实现；⑥与"无 takeover/三低"冲突，待用户拍板路线。5 分钟静止 CPU/内存测量尚未做（用户提前结束测试转入优化）。
+
+## 反馈优化轮（2026-11-11 第五轮，TDD 逐项）
+
+- #12 完成（4f37a71）：HintPolicy.shows 恒 true，快捷键提示整段地图会话常驻。RED→GREEN，全套绿。
+- #13 完成（b0b4b3a）：SetupPageLayout 把动作行钉在中下部（bottomMargin 140，随字号缩放），与演示区大小解耦；演示/文案居中于上半。Ruling: 视觉落点（中下部、边距 140）需真机确认 — 代价：若观感不佳改一个常量。
+- #14 完成（5d2909e）：BackgroundSpec 模糊带展宽到整个拉远（focusSharpZoom 1.0 / focusFullZoom 0.3），levelRadii 改 [0,4,8,14,28,44,60]（相邻跳≤16px）逐级淡入。Ruling: 更细梯度多两级半尺度模糊层（内存代价）换平滑 — 代价：内存略增；平滑观感需真机确认。
+- #15 完成（3955152）：showFitsAll 加 seeAll 意图，四指 See All 从窗口入图也拉远相机（不再 1:1  reopen）；MC 键返回仍保留相机（#5 不破坏）。RED→GREEN，全套绿。
+- #17 完成（本轮提交）：四指分开/F11/菜单 Show Desktop 可选露出真实 macOS 桌面。
+  - Ruling: 真实桌面用 opt-in（Settings.realDesktopOnShowDesktop 默认 false）+ 发送系统 Show Desktop 快捷键 F11（virtualKey 103，marked event 到 .cghidEventTap）实现，不用私有 API — 无公开 Show Desktop API，发快捷键是 BTT 等工具的既有公开手法；代价：依赖用户在"系统设置›键盘›键盘快捷键›调度中心"启用 Show Desktop（默认 F11），关闭/改键则无效或触发别的动作；系统交互真机未验收。默认关以保留可用的画布快照地板。
+  - Ruling: KeyTap.handle 加 marked-event passthrough（KeyTap.passesOn），否则 canvas 自发的 F11 被自己的 tap 截获再触发 showDesktop 成循环 — 代价：无（marked 事件本即 canvas 自发，PressTap 对鼠标已有同款）。
+  - Ruling: 恢复挂在 showNow() 漏斗（任何召唤——再分开/F11/MC 键——都先恢复系统窗口再清标志），reveal 用 mapDidHide() 停刷新丢在途帧 — 代价：real desktop 期间用户点 Dock/真窗使系统状态与 realDesktopShown 可能不同步（best-effort，opt-in，真机清单观察）。
+  - Ruling: 测试 target 为 Swift 6 严格模式（生产 Canvas 模块 Swift 5），KeyTapPassthroughTests 标 @MainActor 才能读 CanvasView.passedOnMark — 代价：无。
+  - 验证：ShowDesktopPolicyTests/KeyTapPassthroughTests/SettingsTests RED（compile error）→GREEN；swift test 695 tests、1 skipped、0 failures。UI 开关在 Settings›How to use›Trackpad›Show Desktop。

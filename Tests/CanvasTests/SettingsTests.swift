@@ -59,4 +59,19 @@ final class SettingsTests: XCTestCase {
             XCTAssertEqual(Settings.switcherEdge, .bottom)
         }
     }
+
+    func testRealDesktopDefaultsOffAndRoundTrips() async {
+        await MainActor.run {
+            let defaults = UserDefaults.standard
+            let saved = defaults.object(forKey: "CanvasRealDesktop")
+            defer { defaults.set(saved, forKey: "CanvasRealDesktop") }
+            defaults.removeObject(forKey: "CanvasRealDesktop")
+            // Off keeps the working canvas floor; the real desktop is opt-in.
+            XCTAssertFalse(Settings.realDesktopOnShowDesktop)
+            Settings.realDesktopOnShowDesktop = true
+            XCTAssertTrue(Settings.realDesktopOnShowDesktop)
+            Settings.realDesktopOnShowDesktop = false
+            XCTAssertFalse(Settings.realDesktopOnShowDesktop)
+        }
+    }
 }

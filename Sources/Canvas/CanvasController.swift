@@ -76,6 +76,9 @@ final class CanvasController {
     private var desktopShown: Camera? { didSet { if (oldValue == nil) != (desktopShown == nil) { updateMinimap() } } }
     /// Show Desktop was asked for from a window: it happens once the canvas is back in front.
     private var pendingShowDesktop = false
+    /// The real macOS desktop is showing (`Settings.realDesktopOnShowDesktop`): the canvas stepped aside
+    /// and the system's Show Desktop slid the real windows away. The next summon restores them.
+    private var realDesktopShown = false
     /// The actions of the floor's right-click menu that's up.
     private var floorMenuActions: MenuActions?
     /// Files dragged off the floor sprang a window open: the canvas lets the pointer through to it until
@@ -1364,6 +1367,12 @@ final class CanvasController {
     }
 
     private func showNow() {
+        // The real macOS desktop was showing: the canvas coming back restores the system's windows first
+        // (the shortcut toggles), whatever summoned it — the spread again, F11, the Mission Control key.
+        if realDesktopShown {
+            realDesktopShown = false
+            postSystemShowDesktop()
+        }
         if !hintVisitActive {
             hintVisitActive = true
             let seen = Settings.tableclothMapEntries
@@ -1696,6 +1705,10 @@ final class CanvasController {
     /// comes back first.
     func showDesktop() {
         guard addingWidgets == nil else { return }   // the desktop is in edit mode; Done comes back
+        if ShowDesktopPolicy.reveal(realDesktop: Settings.realDesktopOnShowDesktop) == .systemDesktop {
+            toggleRealDesktop()
+            return
+        }
         if !NSApp.isActive || activeProxy != nil {
             pendingShowDesktop = true
             pendingFitAll = false
@@ -1706,6 +1719,37 @@ final class CanvasController {
             endShowDesktop(flyBack: true)
         } else {
             beginShowDesktop()
+        }
+    }
+
+    /// The real macOS desktop, opt-in: the canvas steps aside and the system's own Show Desktop runs, so
+    /// the desktop revealed is the live, clickable one rather than the canvas's snapshot. Asked again (or
+    /// whenever the canvas is summoned back), the system's windows are restored. Needs the system's Show
+    /// Desktop shortcut enabled — F11 by default; see `postSystemShowDesktop`.
+    private func toggleRealDesktop() {
+        if realDesktopShown {
+            show()   // `showNow` restores the system's windows and clears the flag
+        } else {
+            realDesktopShown = true
+            closeSwitcher(clearHighlight: true)
+            Log.note("Desktop: revealing the real macOS desktop")
+            mapDidHide()             // the canvas steps aside; nothing on it refreshes while it's away
+            postSystemShowDesktop()  // the system slides the real windows away
+        }
+    }
+
+    /// The system's Show Desktop shortcut, posted as a marked key so the canvas's own key tap lets it
+    /// through (`KeyTap.passesOn`). F11 (virtual key 103) is the default; the system toggles — once reveals
+    /// the desktop, again restores the windows. Requires Show Desktop enabled in System Settings › Keyboard
+    /// › Keyboard Shortcuts › Mission Control; with it off or rebound this does nothing (or the rebound
+    /// action), which is why the real desktop is opt-in and the canvas floor is the default.
+    private func postSystemShowDesktop() {
+        for down in [true, false] {
+            // 103: F11, the default Show Desktop shortcut.
+            guard let e = CGEvent(keyboardEventSource: nil, virtualKey: 103, keyDown: down) else { continue }
+            e.flags = []
+            e.setIntegerValueField(.eventSourceUserData, value: CanvasView.passedOnMark)
+            e.post(tap: .cghidEventTap)
         }
     }
 

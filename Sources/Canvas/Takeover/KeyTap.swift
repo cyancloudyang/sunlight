@@ -228,6 +228,11 @@ final class KeyTap: @unchecked Sendable {
             if let port, isEnabled { CGEvent.tapEnable(tap: port, enable: true) }
             return Unmanaged.passUnretained(event)
         }
+        // A key the canvas posted itself goes straight on to the system: the Show Desktop shortcut it
+        // posts (`postSystemShowDesktop`) must not be caught here and re-triggered, which would loop.
+        if KeyTap.passesOn(userData: event.getIntegerValueField(.eventSourceUserData)) {
+            return Unmanaged.passUnretained(event)
+        }
         // Stopped: nothing is the canvas's (a key that came through before the tap stopped listening).
         guard isEnabled else { return Unmanaged.passUnretained(event) }
 
@@ -300,6 +305,12 @@ final class KeyTap: @unchecked Sendable {
         }
         guard status == noErr, length > 0 else { return nil }
         return String(utf16CodeUnits: chars, count: length)
+    }
+
+    /// A key the canvas posted itself, marked so (`CanvasView.passedOnMark`), is never its own to
+    /// intercept: it goes straight on to the system. The Show Desktop shortcut the canvas posts is one.
+    static func passesOn(userData: Int64) -> Bool {
+        userData == CanvasView.passedOnMark
     }
 
     /// `character`: what the key types (`character(of:)`), where known; the N key's code stands in for it.
