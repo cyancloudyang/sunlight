@@ -714,8 +714,17 @@ final class WindowProxy {
         }
         guard seam || !isStreaming || !hasFrame else { return }   // a silent stream's proxy takes one too
         refreshing = true
+        let life = captureLife
         OneShotCapture.capture(window, seam: seam) { [weak self] image in
             guard let self else { return }
+            // The screen went away while this was being photographed: the frame is of a map that isn't
+            // there any more, and the seam asked for behind it isn't wanted either (#9).
+            guard WindowProxy.acceptsCapture(startedIn: life, current: self.captureLife) else {
+                Log.note("Capture: dropped a frame from life \(life) (now \(self.captureLife)) — \(self.appName)")
+                self.refreshing = false
+                self.seamPending = false
+                return
+            }
             self.refreshing = false
             if let image, !self.usesRealWindow, !self.isStreaming || !self.hasFrame {
                 self.currentBuffer = nil   // the stream's last IOSurface can go now
@@ -726,6 +735,24 @@ final class WindowProxy {
                 self.refresh(seam: true)
             }
         }
+    }
+
+    /// Whether a frame started in `startedIn` is still wanted in `current`: the screen went away in
+    /// between (hide, sleep), and a frame of the life before it is dropped.
+    nonisolated static func acceptsCapture(startedIn: UInt64, current: UInt64) -> Bool {
+        startedIn == current
+    }
+
+    /// The life this proxy's captures belong to; `dropCapturesInFlight` moves it on, so whatever is coming
+    /// back is dropped, and one already asked for (`seamPending`) isn't taken.
+    private var captureLife: UInt64 = 0
+
+    /// Hidden or asleep: the frame on its way is dropped, and the seam asked for behind it isn't taken.
+    /// `refreshing` is cleared so a window on the next screen can be photographed at once.
+    func dropCapturesInFlight() {
+        captureLife &+= 1
+        refreshing = false
+        seamPending = false
     }
 
     /// Whether the proxy is in (or near) the viewport, as the capture pass last saw it.

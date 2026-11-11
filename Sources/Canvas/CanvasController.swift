@@ -1223,6 +1223,13 @@ final class CanvasController {
         }
     }
 
+    /// Whether the map's periodic work — the listings and the 30 s enumeration — has anything to do. It
+    /// has while the map is on screen and the Mac is awake; hidden or asleep, every tick would only find
+    /// a map no one can see (#9 in the handoff).
+    nonisolated static func mapWorkStaysOn(visible: Bool, asleep: Bool) -> Bool {
+        visible && !asleep
+    }
+
     /// How often the window server's list is read without an event asking for it: moves and title
     /// changes wait this long at most. New windows and windows leaving the Space come as events
     /// (`WindowServerEvents`) and list at once.
@@ -1232,7 +1239,7 @@ final class CanvasController {
     /// freshen the handles and retry windows it didn't return. Both in the common modes, so a menu or
     /// a sheet doesn't pause them; both only while the canvas is active.
     private func startSyncTimer() {
-        guard diffTimer == nil else { return }
+        guard diffTimer == nil, CanvasController.mapWorkStaysOn(visible: window.isVisible, asleep: asleep) else { return }
         let d = Timer(timeInterval: CanvasController.listingInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.runDiff() }
         }
@@ -1283,6 +1290,7 @@ final class CanvasController {
     private func dormancyChanged(_ asleep: Bool) {
         self.asleep = asleep
         if asleep {
+            invalidationOfCaptures()   // a capture begun before the display slept must not land after
             suspendRealWindows()
             capturePass()
             stopSyncTimer()
@@ -1346,6 +1354,8 @@ final class CanvasController {
         window.ignoresMouseEvents = false
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        // Off the screen the listings stopped (`mapDidHide`): back on it, they run again.
+        startSyncTimer()
         desk?.bringForward(besides: self)
         // Keys go to the canvas view.
         if window.firstResponder === window { window.makeFirstResponder(view) }
@@ -8167,10 +8177,25 @@ final class CanvasController {
         }
     }
 
-    /// The map is off the screen: nothing on it can be seen, so nothing on it refreshes.
+    /// The map is off the screen: nothing on it can be seen, so nothing on it refreshes — the refresh
+    /// timer, the listings and the 30 s enumeration all go, and frames already on their way are dropped.
     private func mapDidHide() {
         window.orderOut(nil)
         ensureRefreshTimer()   // off the screen, the timer goes too
+        stopSyncTimer()
+        invalidationOfCaptures()
+    }
+
+    /// How many times the screen has gone away or come back (hide, sleep, wake). A capture started in
+    /// one life that lands in the next is a frame of a screen that isn't there any more: dropped.
+    private(set) var captureLife: UInt64 = 0
+
+    /// Everything that was being photographed now belongs to the life before: the captures in flight are
+    /// dropped when they land, and the ones queued behind them aren't taken.
+    private func invalidationOfCaptures() {
+        captureLife &+= 1
+        for p in proxies.values { p.dropCapturesInFlight() }
+        Log.note("Lifecycle: captures in flight dropped (life \(captureLife))")
     }
 
     private func stepDownForForeignApp() {
