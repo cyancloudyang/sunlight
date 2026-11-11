@@ -346,6 +346,11 @@ enum Settings {
 
     private static let minimapKey = "Minimap"
 
+    static var tableclothMapEntries: Int {
+        get { UserDefaults.standard.integer(forKey: "TableclothMapEntries") }
+        set { UserDefaults.standard.set(newValue, forKey: "TableclothMapEntries") }
+    }
+
     /// Whether the minimap is shown. On until it's hidden.
     static var showMinimap: Bool {
         get { UserDefaults.standard.object(forKey: minimapKey) == nil || UserDefaults.standard.bool(forKey: minimapKey) }

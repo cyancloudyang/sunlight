@@ -515,6 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             item("Change Background…", #selector(showBackgroundSettings)),
             item("Add Widgets…", #selector(addWidgets)),
             item("Minimap", #selector(toggleMinimap)),
+            item("显示操作提示", #selector(showControlHints)),
             item("Desktop Files", #selector(toggleDesktopFloor)),
             captureMethodMenuItem(),
             item("Reload Live Windows…", #selector(reloadLiveWindows)),
@@ -803,6 +804,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// The desktop's widget gallery; the canvas steps aside while it's open.
     @objc private func addWidgets() {
         canvas?.addWidgets()
+    }
+
+    @objc private func showControlHints() {
+        canvas?.showControlHints()
     }
 
     @objc private func toggleMinimap() {

@@ -237,6 +237,7 @@ final class Desk {
     func toggleStripMode() { current.toggleStripMode() }
     func togglePip() { current.togglePipCommand() }
     func toggleMinimap() { current.toggleMinimap() }
+    func showControlHints() { current.showControlHints() }
     func toggleDesktopFloor() { current.toggleDesktopFloor() }
     func showDesktop() { current.showDesktop() }
     func moveToDisplay(step: Int) { current.moveToDisplay(step: step) }

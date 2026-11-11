@@ -65,6 +65,8 @@ final class CanvasController {
     /// Screen-space chrome over the canvas: the minimap.
     let overlay: OverlayView
     let minimap: MinimapPanel
+    private let hintBar = HintBar()
+    private var hintVisitActive = false
     /// The background behind the windows: the settings and the right-click menu change it here.
     let background: BackgroundModel
     /// Finder's desktop, under every window and widget, where its position setting puts it.
@@ -495,6 +497,7 @@ final class CanvasController {
 
         overlay.canvas = view
         overlay.addSubview(minimap)
+        overlay.addSubview(hintBar)
         minimap.isHidden = true
         placeMinimap()
         updateMinimap(animated: false)
@@ -535,6 +538,7 @@ final class CanvasController {
                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.hintVisitActive = false
                 self.reassertFrontIfTakenBack()
                 // A window entered on another display: this one's canvas stays up as it is.
                 if !self.staysUp {
@@ -1301,6 +1305,12 @@ final class CanvasController {
     }
 
     private func showNow() {
+        if !hintVisitActive {
+            hintVisitActive = true
+            let seen = Settings.tableclothMapEntries
+            hintBar.setShown(HintPolicy.shows(mapEntriesSeen: seen))
+            Settings.tableclothMapEntries = seen + 1
+        }
         springDrag = false
         window.ignoresMouseEvents = false
         NSApp.activate()
@@ -1960,6 +1970,12 @@ final class CanvasController {
 
     // MARK: Minimap
 
+    func showControlHints() {
+        Settings.tableclothMapEntries = 0
+        hintVisitActive = false
+        show()
+    }
+
     var isMinimapShown: Bool { Settings.showMinimap }
 
     func toggleMinimap() {
@@ -1987,6 +2003,7 @@ final class CanvasController {
     /// Bottom right, or out of the ⌘Tab strip's way while it shows.
     private func placeMinimap(animated: Bool = false) {
         let v = visibleTopLeft
+        hintBar.place(in: v)
         let s = MinimapPanel.size
         var frame = CGRect(x: v.maxX - MinimapPanel.margin - s.width, y: v.maxY - MinimapPanel.margin - s.height,
                            width: s.width, height: s.height)

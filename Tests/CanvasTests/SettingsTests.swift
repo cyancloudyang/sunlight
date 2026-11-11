@@ -2,6 +2,19 @@ import XCTest
 @testable import Canvas
 
 final class SettingsTests: XCTestCase {
+    func testMapEntryCountStartsAtZeroAndPersists() async {
+        await MainActor.run {
+            let defaults = UserDefaults.standard
+            let saved = defaults.object(forKey: "TableclothMapEntries")
+            defer { defaults.set(saved, forKey: "TableclothMapEntries") }
+            defaults.removeObject(forKey: "TableclothMapEntries")
+            XCTAssertEqual(Settings.tableclothMapEntries, 0)
+            Settings.tableclothMapEntries = 5
+            XCTAssertEqual(defaults.integer(forKey: "TableclothMapEntries"), 5)
+            XCTAssertEqual(Settings.tableclothMapEntries, 5)
+        }
+    }
+
     func testRendererIsAlwaysCapture() async {
         await MainActor.run {
             XCTAssertEqual(Settings.renderer, .capture)
