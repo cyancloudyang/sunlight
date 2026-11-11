@@ -83,7 +83,7 @@ final class CanvasController {
     private var springDrag = false
 
     /// Set once takeover mode exists. Its watcher and key tap only feed us while it is running.
-    weak var takeover: TakeoverMode?
+    weak var takeover: CanvasInput?
 
     /// The display this canvas covers. Its world is global coordinates like every canvas's (see `Display`);
     /// its view starts at the display's origin.
@@ -159,6 +159,12 @@ final class CanvasController {
     /// The setup window is asking for Screen Recording at launch: the capture fallback doesn't also
     /// put up the system's prompt.
     var permissionsAskedElsewhere = false
+    /// The two permissions, read fresh at every gate: a revoked Screen Recording stops the snapshots
+    /// and the map, a revoked Accessibility stops focus and the widget gallery. Tests substitute their
+    /// own reading rather than the Mac's.
+    var permissionGate: () -> PermissionGate = PermissionGate.current
+    /// Says once that the snapshots can't run, rather than on every timer tick.
+    private var loggedMissingScreenRecording = false
     /// After a fall-back from live windows: asks the addition again, at growing intervals, and goes
     /// back to live windows once it answers (see `scheduleLiveRecovery`).
     private var liveRecoveryTimer: Timer?
@@ -323,7 +329,7 @@ final class CanvasController {
     private var restoring: RestoringLayout?
     private var restoringTimer: Timer?
 
-    private var env: TakeoverMode? { takeover?.isRunning == true ? takeover : nil }
+    private var env: CanvasInput? { takeover?.isRunning == true ? takeover : nil }
 
     init(display: Display, desk: Desk? = nil, lead: Bool = true) {
         self.display = display
@@ -912,7 +918,7 @@ final class CanvasController {
         let pid = app.processIdentifier
         // As `foreignActivation` lets an activation through before it gets to these.
         guard pid != myPID, activeProxy == nil, realWindowsPresented, app.activationPolicy == .regular,
-              let env, Date() >= env.ignoreActivationsUntil, addingWidgets == nil, !isSetupShowing,
+              let env, addingWidgets == nil, !isSetupShowing,
               pid != expectedActivationPID else { return false }
         if Date() < quietAfterCloseUntil || !app.isFinishedLaunching { return true }
         if let launch = launches[pid], Date() < launch.deadline { return true }
@@ -1197,6 +1203,25 @@ final class CanvasController {
 
     // MARK: Timers and dormancy
 
+    /// A permission changed while the canvas is up. Screen Recording going takes the map with it: it's
+    /// snapshots, and nothing could freshen them; the timers that would only find failures stop too.
+    /// Accessibility going hides nothing: the map still reads, it just can't be entered (`handoff`).
+    func mapPermissionChanged(_ change: PermissionGate.Change) {
+        guard change.hideMap || change.startCapture else { return }
+        if change.hideMap {
+            stopSyncTimer()
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+            if window.isVisible { window.orderOut(nil) }
+            Log.note("Screen Recording revoked: the map is put away until it's granted again")
+        }
+        if change.startCapture {
+            Log.note("Screen Recording granted: the map's snapshots can run")
+            startSyncTimer()
+            requestFullSync(for: [])
+        }
+    }
+
     /// How often the window server's list is read without an event asking for it: moves and title
     /// changes wait this long at most. New windows and windows leaving the Space come as events
     /// (`WindowServerEvents`) and list at once.
@@ -1278,6 +1303,11 @@ final class CanvasController {
 
     func show() {
         guard !paused else { return }   // off in the menu bar; the switch brings it back
+        // The map is snapshots: with no Screen Recording there is nothing to draw, and showing an empty
+        // canvas would claim a map that isn't there. Setup holds the way to grant it.
+        guard permissionGate().allows(.map) else {
+            return Log.note("Show: no Screen Recording — the map stays off until it's granted")
+        }
         // The canvas wants the front from now (`frontTakenBack`); a show on top of one still on its way
         // doesn't extend the wish, so an app that keeps taking the front can't be fought for ever.
         let now = CACurrentMediaTime()
@@ -2440,6 +2470,14 @@ final class CanvasController {
     /// anything (the window list does that), only creates, and freshens the handles of the rest.
     func syncShareableContent() async {
         guard renderer == .capture, !configuringRenderer else { return }
+        guard permissionGate().allows(.listWindows) else {
+            if !loggedMissingScreenRecording {
+                loggedMissingScreenRecording = true
+                Log.note("Sync: no Screen Recording — the map stays off until it's granted")
+            }
+            return
+        }
+        loggedMissingScreenRecording = false
         let revision = rendererRevision
         guard !syncing, !handingOff, addingWidgets == nil else {
             fullSyncPending = true
@@ -2874,6 +2912,7 @@ final class CanvasController {
 
     /// What an event asks the snapshots to do, per the refresh policy — nothing while the map is hidden.
     private func refresh(for event: RefreshPolicy.Event, primary: WindowProxy? = nil) {
+        guard permissionGate().allows(.snapshot) else { return }
         let actions = RefreshPolicy.actions(for: event, mapVisible: mapIsVisible,
                                             rotationEnabled: Settings.snapshotRotation, handoffInFlight: handingOff)
         for action in actions {
@@ -2893,6 +2932,7 @@ final class CanvasController {
     }
 
     private func refreshTick() {
+        guard permissionGate().allows(.snapshot) else { return }
         refreshTicks &+= 1
         let actions = RefreshPolicy.actions(for: .tick, mapVisible: mapIsVisible,
                                             rotationEnabled: Settings.snapshotRotation, handoffInFlight: handingOff)
@@ -2941,6 +2981,7 @@ final class CanvasController {
         }
         for attempt in 0..<3 {
             if let p = proxies[windowID] { return p }
+            guard permissionGate().allows(.snapshot) else { return nil }
             guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else {
                 return nil
             }
@@ -3282,6 +3323,7 @@ final class CanvasController {
     /// The enumeration is heavyweight and the live timer asks twice a second: a widget it doesn't list
     /// is asked about again every few seconds, not every tick.
     private func fetchWidgetHandles() {
+        guard permissionGate().allows(.snapshot) else { return }
         let now = CACurrentMediaTime()
         guard !fetchingWidgetHandles, now - widgetHandlesFetchedAt >= 5 else { return }
         fetchingWidgetHandles = true
@@ -4722,6 +4764,11 @@ final class CanvasController {
     /// 1:1 in front of everything) and glides to its place on the canvas as the camera goes to it, so
     /// it never leaves the screen on the way (live windows; see `slide(into:)`).
     func handoff(to p: WindowProxy, placement: Placement = .fillScreen, spatial: Bool = false, gliding from: CGPoint? = nil) {
+        // Focus moves a window of another app and raises its app: that's Accessibility, and without it
+        // the flight would leave the map only to find the window where it already was.
+        guard permissionGate().allows(.focus) else {
+            return Log.note("Handoff: no Accessibility — the canvas can't drive \(p.appName)'s window")
+        }
         guard !handingOff, p.kind == .window else { return letGo(p) }
         // A sheet or prompt is entered through its parent, which it rides on; the clicked spot stays put.
         if let parent = parentOf(p) {
@@ -6656,7 +6703,7 @@ final class CanvasController {
             if let p = activeProxy, p.pid == pid { restoreShadowLooks(of: p.windowID, entered: true) }
             return
         }
-        guard let env, app.activationPolicy == .regular, Date() >= env.ignoreActivationsUntil else { return }
+        guard let env, app.activationPolicy == .regular else { return }
         // A click on the desktop while adding widgets activates Finder; that's part of editing them.
         // With setup up, the System Settings a step opened is meant to be in front.
         guard addingWidgets == nil, !isSetupShowing else { return }

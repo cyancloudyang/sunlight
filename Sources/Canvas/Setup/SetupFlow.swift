@@ -75,9 +75,8 @@ enum SetupFlow {
             break
         }
         if !record.welcomed { return .welcome }
-        if !record.loginItemChosen { return .loginItem }
         if !status.accessibility { return .accessibility }
-        if !status.screenRecording && !record.skippedScreenRecording { return .screenRecording }
+        if !status.screenRecording { return .screenRecording }
         // Once, before the canvas first opens; a Mac with live windows on has long found its way around.
         if !record.learnedBasics && !status.liveWindowsLoaded { return .basics }
         return .preview
@@ -112,7 +111,7 @@ enum SetupFlow {
                               quietReloadPaused: Bool = false) -> Bool {
         if record.resume != nil { return true }
         if previewMode {
-            return !record.welcomed || !record.loginItemChosen || !status.accessibility || !status.screenRecording && !record.skippedScreenRecording
+            return !record.welcomed || !status.accessibility || !status.screenRecording
                 || !record.learnedBasics
         }
         if onlyTheAddOnIsMissing(status), reloadsQuietly(status), !quietReloadPaused { return false }
@@ -144,7 +143,7 @@ enum SetupFlow {
             RailEntry(title: title, pages: pages, state: pages.contains(page) ? .current : done ? .done : .todo)
         }
         return [
-            entry("Welcome", [.welcome, .loginItem], done: record.welcomed && record.loginItemChosen),
+            entry("Welcome", [.welcome], done: record.welcomed),
             entry("Accessibility", [.accessibility], done: status.accessibility),
             entry("Screen Recording", [.screenRecording], done: status.screenRecording),
             entry("The basics", [.basics], done: record.learnedBasics || status.liveWindowsLoaded),

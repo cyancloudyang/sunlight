@@ -705,25 +705,6 @@ final class SettingsWindowController: NSWindowController {
         get { model.onTutorial }
         set { model.onTutorial = newValue }
     }
-    /// Settings › General › Take over the Mac: on asks for consent (a sheet on the canvas), off releases
-    /// and quits, as the menu's Release the Mac… does.
-    var isTakenOver: (() -> Bool)? {
-        get { model.isTakenOver }
-        set { model.isTakenOver = newValue }
-    }
-    var onTakeOver: (() -> Void)? {
-        get { model.onTakeOver }
-        set { model.onTakeOver = newValue }
-    }
-    var onRelease: (() -> Void)? {
-        get { model.onRelease }
-        set { model.onRelease = newValue }
-    }
-    /// Settings › General › Uninstall Sunlight…
-    var onUninstall: (() -> Void)? {
-        get { model.onUninstall }
-        set { model.onUninstall = newValue }
-    }
     /// Settings › Canvas › Minimap, Desktop files: the canvas shows or hides them.
     var onMinimapChange: ((Bool) -> Void)? {
         get { model.onMinimapChange }
@@ -1125,20 +1106,12 @@ private struct GeneralPane: View {
                         .frame(width: 56, height: 56)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text(versionTitle).font(.headline)
-                            StatusPill(text: takenOver ? "Taking over the Mac" : "Not taking over", colour: takenOver ? .green : .secondary)
-                        }
-                        Text("Replaces the Dock, ⌘Tab and Mission Control. Off puts them back.")
+                        Text(versionTitle).font(.headline)
+                        Text("A snapshot map of your Mac’s windows. Nothing here changes system preferences or login items.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer(minLength: 8)
-                    Toggle("Take over the Mac", isOn: model.bind({ model.isTakenOver?() == true }, { on in
-                        if on { model.onTakeOver?() } else { model.onRelease?() }
-                    }))
-                    .labelsHidden()
                 }
                 .padding(.vertical, 4)
             }
@@ -1168,20 +1141,10 @@ private struct GeneralPane: View {
                     SectionHeader(title: "Updates")
                 }
             }
-            Section {
-                LabeledContent {
-                    Button("Uninstall…") { model.onUninstall?() }
-                } label: {
-                    RowLabel(title: "Uninstall Sunlight",
-                             subtitle: "Undoes setup and moves Sunlight to the Trash.")
-                }
-            }
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
     }
-
-    private var takenOver: Bool { model.isTakenOver?() == true }
 
     private var versionTitle: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String

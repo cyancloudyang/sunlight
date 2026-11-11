@@ -711,25 +711,11 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
                                  secondary: [diagnose], note: note, busy: loading)
 
         case .tour:
-            let intro = "The canvas is a window manager you look at: everything on your Mac, live, at any zoom. Press the Mission Control key to come back to it from any window."
-            // Taken over already: the canvas is all that's left.
-            if isTakenOver?() == true {
-                return SetupPageSpec(page: page, eyebrow: "Live windows are on", headline: "Here’s how it works.",
-                                     paragraphs: [intro], extra: .tour,
-                                     primary: action("primary", "Open the Canvas") { [weak self] in self?.close() })
-            }
-            // Otherwise taking over is the way on, and the only one: its own consent follows, on the canvas,
-            // once the window is away.
-            return SetupPageSpec(page: page, eyebrow: "Live windows are on", headline: "Here’s how it works.",
-                                 paragraphs: [intro, "Last step: take over, and Sunlight becomes your Mac’s home. ⌘Tab, Mission Control and Show Desktop land on the canvas, and the Dock tucks away. Everything goes back when Sunlight quits."],
+            let intro = "The canvas is a window manager you look at: everything on your Mac, as a map, at any zoom. Press the Mission Control key to come back to it from any window."
+            return SetupPageSpec(page: page, eyebrow: "Ready", headline: "Here’s how it works.",
+                                 paragraphs: [intro, "Your Mac stays yours: Sunlight never changes system preferences, never adds a login item, and puts nothing inside other apps. The Dock, Mission Control and ⌘Tab are untouched."],
                                  extra: .tour,
-                                 primary: action("primary", "Take Over…") { [weak self] in
-                                     guard let self else { return }
-                                     let takeOver = self.onTakeOver
-                                     self.journal("Tour: take over")
-                                     self.close()
-                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { takeOver?() }
-                                 })
+                                 primary: action("primary", "Open the Canvas") { [weak self] in self?.close() })
         }
     }
 
@@ -791,10 +777,6 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
         guard !review else { return step(1) }
         SetupRecord.loginItemChosen = true
         journal("Open at login: \(model.loginItem ? "on" : "off")")
-        StageManager.turnOff(why: "setup")
-        if model.loginItem {
-            DispatchQueue.global(qos: .utility).async { LoginItem.register() }
-        }
         check()
     }
 

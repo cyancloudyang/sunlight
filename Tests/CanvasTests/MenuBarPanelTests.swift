@@ -54,7 +54,6 @@ final class MenuBarPanelTests: XCTestCase {
         XCTAssertFalse(model.canToggleMinimap)
         XCTAssertFalse(model.canToggleStrip)
         XCTAssertFalse(model.canReload)
-        XCTAssertFalse(model.canTakeOver)
     }
 
     func testStripModeStopsTidyAndArrangeButNotLayouts() {
@@ -78,17 +77,15 @@ final class MenuBarPanelTests: XCTestCase {
         XCTAssertFalse(model.canTidy)
         XCTAssertFalse(model.canUseLayouts)
         XCTAssertFalse(model.canReload)
-        XCTAssertFalse(model.canTakeOver)
     }
 
-    func testReloadAndTakeOverFollowTheirState() {
+    func testReloadFollowsItsState() {
         let model = Model()
         XCTAssertFalse(model.canReload)
         model.liveWindowsUnloaded = true
         XCTAssertTrue(model.canReload)
-        XCTAssertTrue(model.canTakeOver)
-        model.takeoverRunning = true
-        XCTAssertFalse(model.canTakeOver)
+        model.setupShowing = true
+        XCTAssertFalse(model.canReload)
     }
 
     func testLayoutsSummaryCounts() {

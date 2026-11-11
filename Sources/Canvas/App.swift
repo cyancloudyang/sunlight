@@ -4,12 +4,6 @@ import Carbon.HIToolbox
 @main
 enum CanvasApp {
     @MainActor static func main() {
-        // The guard `Stability.startGuard` starts beside the app: it only waits for the app to exit.
-        if let index = CommandLine.arguments.firstIndex(of: "--guard"), index + 1 < CommandLine.arguments.count,
-           let parent = pid_t(CommandLine.arguments[index + 1]) {
-            Stability.guardMain(parent: parent)
-        }
-        LegacyMigration.run()
         // A Mac already set up for live windows (SIP partly off, boot argument set) that gets this build
         // isn't a fresh install: no preview mode for it.
         if !Settings.liveWindowsEverLoaded, SetupStatus.liveWindowsPossible() { Settings.liveWindowsEverLoaded = true }
@@ -37,7 +31,10 @@ enum CanvasApp {
                 exit(1)
             }
         }
-        if args.contains("--release") { exit(TakeoverMode.releaseFromCommandLine()) }
+        if args.contains("--release") {
+            print("Tablecloth does not change system preferences or login items.")
+            exit(0)
+        }
         if args.contains("--status") {
             TakeoverMode.printStatus()
             exit(0)
@@ -79,11 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// The ⌃⌥ placement keys (`TileMenu`): global, so they work in a real window too.
     private var tileHotkeys: [Hotkey] = []
     private var trackpadPan: TrackpadPan?
-    private var takeover: TakeoverMode?
+    private var input: CanvasInput?
     private var signalSources: [DispatchSourceSignal] = []
     private var settings: SettingsWindowController?
     private var setup: SetupWizardController?
-    private var uninstall: UninstallController?
     /// What no setup step can change about this Mac, read once.
     private let mac = SetupFlow.Mac.current()
     /// The last look at the Mac's setup, for the menu item's title.
@@ -110,7 +106,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // this copy goes, nothing else comes up.
         if MoveToApplications.offerIfNeeded() { return }
         Watchdog.shared.start()
-        Stability.startGuard()
         DispatchQueue.global(qos: .utility).async { CrashReports.collect() }
         DispatchQueue.main.asyncAfter(deadline: .now() + Stability.settleTime) { MainActor.assumeIsolated { Stability.settle() } }
         AXWindow.installGlobalTimeout(1)
@@ -183,58 +178,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // Switched off in the menu bar last time: it stays off until the switch says otherwise.
             canvas.setPaused(true)
         }
-        if UninstallRecord.resuming {
-            // Back from the Recovery restart an uninstall asked for: finish that, not setup.
-            showUninstall()
-        } else {
-            // The wizard asks for the permissions when it opens; when it doesn't, the system's own prompt does.
-            canvas.permissionsAskedElsewhere = Settings.previewMode
-            setupController().showIfNeeded { [weak canvas] shown, status in
-                guard !shown else { return }
-                canvas?.permissionsAskedElsewhere = false
-                if !status.accessibility { Permissions.requestAccessibility() }
-            }
-        }
+        canvas.permissionsAskedElsewhere = true
+        setupController().showIfNeeded { _, _ in }
 
-        let takeover = TakeoverMode(canvas: canvas)
-        self.takeover = takeover
-        canvas.takeover = takeover
+        let input = CanvasInput(canvas: canvas)
+        self.input = input
+        canvas.takeover = input
         installSignalHandlers()
-        // An earlier Canvas restores the Mac as it quits; takeover starts once it has, so the two
-        // never write the prefs over each other. The canvas is up meanwhile.
-        TakeoverMode.quitOtherInstances { [weak self] in
-            // After the earlier copy has quit, which turns Stage Manager back on as it goes. Not before
-            // the open-at-login page of setup, which says so first.
-            if SetupRecord.loginItemChosen { StageManager.turnOff(why: "launch") }
-            if Stability.safeMode {
-                // No takeover this launch; whatever an earlier run left applied goes back.
-                let restored = TakeoverMode.revertPrefs()
-                Log.note("Takeover: not this launch (safe mode)\(restored.isEmpty ? "" : "; put back \(restored.sorted().joined(separator: ", "))")")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MainActor.assumeIsolated { Stability.announceSafeMode() } }
-                return
-            }
-            self?.takeover?.startup()
-            if !Settings.sunlightOn { self?.takeover?.suspendInput() }
-        }
-        // The consent question, if it's still open, once the canvas is populated — or after 3 s
-        // regardless, in case there's nothing to populate it with (no Screen Recording yet).
-        canvas.onFirstSync = { [weak self] in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                MainActor.assumeIsolated { self?.askForConsentIfNeeded() }
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            MainActor.assumeIsolated { [weak self] in self?.askForConsentIfNeeded() }
-        }
-    }
-
-    private var askedConsent = false
-
-    /// Not while the setup window is up: its sheet would land behind it. The window asks again as it closes.
-    private func askForConsentIfNeeded() {
-        guard !askedConsent, setup?.isShowing != true, Settings.sunlightOn, !Stability.safeMode, let takeover, takeover.wantsConsent else { return }
-        askedConsent = true
-        takeover.askForConsent()
+        // The keys reach Sunlight through the tap only with Accessibility: without it there's nothing
+        // to tap and no window to drive, and the wizard holds the grant.
+        if Settings.sunlightOn, PermissionGate.current().allows(.focus) { input.start() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -242,8 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         canvas?.shutdown()
         canvas?.remember()
-        takeover?.revertForTermination(quit: NSAppleEventManager.shared().currentAppleEvent)
-        StageManager.restore()
+        input?.stop()
         Stability.quitCleanly()
         return .terminateNow
     }
@@ -257,12 +209,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             canvas?.show()
         }
         return false
-    }
-
-    /// Another app's "Hide Others" would take the canvas, and with it the whole environment, away.
-    func applicationDidHide(_ notification: Notification) {
-        guard takeover?.isRunning == true, Settings.sunlightOn else { return }
-        NSApp.unhideWithoutActivation()
     }
 
     // MARK: The menu bar
@@ -345,11 +291,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         trackpadPan?.setActive(on)
         if on {
             if let canvas, tileHotkeys.isEmpty { installHotkeys(for: canvas) }
-            takeover?.resumeInput()
+            if PermissionGate.current().allows(.focus) { input?.start() }
             canvas?.setPaused(false)
         } else {
             tileHotkeys = []
-            takeover?.suspendInput()
+            input?.stop()
             canvas?.setPaused(true)
         }
         menuBar?.model.isOn = on
@@ -381,8 +327,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         actions.setUp = { [weak self] in self?.showSetup() }
         actions.checkForUpdates = { [weak self] in self?.checkForUpdates() }
         actions.reloadLiveWindows = { [weak self] in self?.reloadLiveWindows() }
-        actions.takeOver = { [weak self] in self?.takeOverTheMac() }
-        actions.release = { [weak self] in self?.releaseTheMac() }
         actions.quit = { NSApp.terminate(nil) }
         item.model.actions = actions
         return item
@@ -403,7 +347,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         model.busy = canvas?.isAddingWidgets == true || canvas?.isRestoringLayout == true
         model.setupShowing = setup?.isShowing == true
         model.liveWindowsUnloaded = canvas?.canReloadLiveWindows == true
-        model.takeoverRunning = takeover?.isRunning == true
         model.canCheckForUpdates = updater?.canCheck == true
         model.updateVersion = updater?.foundVersion
         model.rendering = canvas?.renderer == .realWindows ? .live : Settings.previewMode ? .preview : .pictures
@@ -427,9 +370,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         add("Set Up Sunlight…", #selector(showSetup))
         add("Check for Updates…", #selector(checkForUpdates))
         add("Reload Live Windows…", #selector(reloadLiveWindows))
-        menu.addItem(.separator())
-        add("Take Over the Mac…", #selector(takeOverTheMac))
-        add("Release the Mac…", #selector(releaseTheMac))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Sunlight", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         return menu
@@ -518,12 +458,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             item("显示操作提示", #selector(showControlHints)),
             item("Desktop Files", #selector(toggleDesktopFloor)),
             captureMethodMenuItem(),
-            item("Reload Live Windows…", #selector(reloadLiveWindows)),
-            .separator(),
-            item("Take Over the Mac…", #selector(takeOverTheMac)),
-            item("Release the Mac…", #selector(releaseTheMac)),
-            .separator(),
-            item("Uninstall Sunlight…", #selector(showUninstall)),
         ]
     }
 
@@ -705,10 +639,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 self?.settings?.close()
                 self?.setupController().showBasics()
             }
-            settings?.isTakenOver = { [weak self] in self?.takeover?.isRunning == true }
-            settings?.onTakeOver = { [weak self] in self?.takeOverTheMac() }
-            settings?.onRelease = { [weak self] in self?.releaseTheMac() }
-            settings?.onUninstall = { [weak self] in self?.showUninstall() }
             settings?.onMinimapChange = { [weak self] shown in
                 if let canvas = self?.canvas, canvas.isMinimapShown != shown { canvas.toggleMinimap() }
             }
@@ -734,9 +664,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func setupController() -> SetupWizardController {
         if let setup { return setup }
         let controller = SetupWizardController(mac: mac, statusProvider: { SetupStatus.current() })
-        controller.onTakeOver = { [weak self] in self?.takeover?.askForConsent() }
-        controller.isTakenOver = { [weak self] in self?.takeover?.isEnabled == true }
-        controller.onClose = { [weak self] in self?.askForConsentIfNeeded() }
         controller.onVisibilityChanged = { [weak self] showing in self?.canvas?.isSetupShowing = showing }
         controller.onStatus = { [weak self] status in
             guard let self else { return }
@@ -744,61 +671,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self.menuBar?.showSetupProgress(lit: SetupFlow.litRays(for: status, mac: self.mac))
             let progress = SetupFlow.progress(for: status, mac: self.mac)
             self.menuBar?.model.setupProgress = MenuBarPanelModel.Progress(done: progress.done, total: progress.total)
+            self.permissionsChanged()
         }
         setup = controller
         return controller
     }
 
-    // MARK: Uninstall
+    /// The two permissions as last read. The wizard re-reads them every pass, so a grant or a revocation
+    /// made in System Settings while Sunlight is running is answered here rather than at the next launch.
+    private var lastGate: PermissionGate?
 
-    @objc private func showUninstall() {
-        uninstallController().showWindow(nil)
-    }
-
-    private func uninstallController() -> UninstallController {
-        if let uninstall { return uninstall }
-        let controller = UninstallController()
-        controller.onLeaveLiveWindows = { [weak self] in
-            self?.canvas?.configureRenderer(.capture)
-        }
-        controller.onReleaseTakeover = { [weak self] in
-            if self?.takeover?.isRunning == true {
-                self?.takeover?.revert(reason: .leaveMode)
-            } else {
-                TakeoverMode.revertPrefs()
-                UserDefaults.standard.set(false, forKey: TakeoverMode.Keys.enabled)
-            }
-            StageManager.restore()
-        }
-        controller.onTrash = { [weak self] removingData in self?.uninstallAndQuit(removingData: removingData) }
-        uninstall = controller
-        return controller
-    }
-
-    /// The uninstall's last step. Not through the normal quit: that writes the canvas back to disk, which
-    /// may just have been removed.
-    private func uninstallAndQuit(removingData: Bool) {
-        SetupJournal.note("Uninstall: Sunlight to the Trash\(removingData ? ", settings removed" : "")")
-        UninstallRecord.resuming = false
-        canvas?.shutdown()
-        if takeover?.isRunning == true { takeover?.revert(reason: .leaveMode) } else { TakeoverMode.revertPrefs() }
-        StageManager.restore()
-        // Before the settings go: with them goes the record this writes.
-        Stability.quitCleanly()
-        if removingData { UninstallFlow.removeUserData() }
-        let bundle = Bundle.main.bundleURL
-        guard bundle.pathExtension == "app" else { exit(0) }
-        NSWorkspace.shared.recycle([bundle]) { _, error in
-            DispatchQueue.main.async {
-                guard let error else { exit(0) }
-                Log.note("Uninstall: couldn't move \(bundle.path) to the Trash — \(error.localizedDescription)")
-                let alert = NSAlert()
-                alert.messageText = "Sunlight couldn't move itself to the Trash"
-                alert.informativeText = "Drag it there from its folder once it has quit. (\(error.localizedDescription))"
-                alert.runModal()
-                exit(0)
-            }
-        }
+    private func permissionsChanged() {
+        let gate = PermissionGate.current()
+        defer { lastGate = gate }
+        guard let old = lastGate, old != gate else { return }
+        let change = PermissionGate.Change(from: old, to: gate)
+        if change.stopInput { input?.stop() }
+        if change.startInput, Settings.sunlightOn { input?.start() }
+        canvas?.permissionsChanged(change)
+        Log.note("Permissions: Accessibility \(gate.accessibility ? "on" : "off"), Screen Recording \(gate.screenRecording ? "on" : "off")")
     }
 
     /// The desktop's widget gallery; the canvas steps aside while it's open.
@@ -861,22 +752,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         canvas?.reloadAddition(interactive: true)
     }
 
-    /// The question is a sheet on the canvas, so the canvas comes forward with it.
-    @objc private func takeOverTheMac() {
-        canvas?.showCanvas(fitAll: false)
-        takeover?.askForConsent()
-    }
-
-    /// Puts the Mac back and opts out; the login item goes too.
-    @objc private func releaseTheMac() {
-        takeover?.revert(reason: .leaveMode)
-        NSApp.terminate(nil)
-    }
-
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         // While the setup window is up, nothing that would put the canvas or another window in front.
         if setup?.isShowing == true, let action = item.action,
-           [#selector(addWidgets), #selector(takeOverTheMac), #selector(reloadLiveWindows), #selector(showUninstall),
+           [#selector(addWidgets), #selector(showControlHints), #selector(reloadLiveWindows),
             #selector(saveLayout), #selector(restoreLayout(_:)), #selector(deleteLayout(_:)),
             #selector(arrangeFromMenu(_:)), #selector(tileFromMenu(_:)),
             #selector(tidyFromMenu), #selector(tidyByFromMenu(_:)), #selector(showInstructions(_:)),
@@ -884,8 +763,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return false
         }
         switch item.action {
-        case #selector(takeOverTheMac): return takeover?.isRunning == false
-        case #selector(releaseTheMac): return takeover?.isRunning == true
         case #selector(addWidgets): return canvas?.isAddingWidgets == false
         case #selector(reloadLiveWindows): return canvas?.canReloadLiveWindows == true
         case #selector(showSetup):

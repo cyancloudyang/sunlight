@@ -102,7 +102,7 @@ final class Desk {
         get { lead.onFirstSync }
         set { lead.onFirstSync = newValue }
     }
-    weak var takeover: TakeoverMode? { didSet { canvases.forEach { $0.takeover = takeover } } }
+    weak var takeover: CanvasInput? { didSet { canvases.forEach { $0.takeover = takeover } } }
     var permissionsAskedElsewhere = false { didSet { canvases.forEach { $0.permissionsAskedElsewhere = permissionsAskedElsewhere } } }
     var isSetupShowing = false { didSet { canvases.forEach { $0.isSetupShowing = isSetupShowing } } }
 
@@ -283,6 +283,12 @@ final class Desk {
     // MARK: On, off, quitting
 
     var paused: Bool { lead.paused }
+
+    /// A permission grant or revocation made while Sunlight is running: every canvas answers it, so the
+    /// map doesn't keep photographing windows it can no longer see.
+    func permissionsChanged(_ change: PermissionGate.Change) {
+        canvases.forEach { $0.mapPermissionChanged(change) }
+    }
 
     func setPaused(_ paused: Bool) {
         // The lead last on the way back: its `show` activates, and the others are up by then.
