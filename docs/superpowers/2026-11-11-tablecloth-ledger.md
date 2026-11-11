@@ -83,3 +83,17 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 验证证据（本会话）：`swift test` 679 tests、1 skipped、0 failures（skip 仍为 DockItemTests.testTheAppsOwnBundleIsItsIcon：runner 无 app bundle）。`SIGN=- scripts/package.sh --app-only` 成功：build/Sunlight.app 内无 Contents/Helpers、无 Library/LaunchDaemons，Info.plist 无 SUFeedURL/SUPublicEDKey，无 entitlements，`codesign --verify --strict --deep` 通过。未运行 app、未做真机交互与 CPU/内存测量（未授予权限前不启动），因此交互验收与资源达标一律标记"未验收"。
 
 仍未做：真机若干部（权限四态、捏合/平移/书签/聚焦往返、睡眠唤醒、5 分钟 CPU/内存），push 与 PR（尚未推送，未发布）。
+
+## 独立复核（2026-11-11 第三轮，Qoder 主会话，非实现者）
+
+对 marvis 报告逐项核实，证据为本会话新跑/新读，非转述：
+
+- git：tablecloth 干净树，22e7da9 之上恰 13 个提交（5c185f5..084ac6f），49 文件 +1906/−964；remotes 未变。
+- `swift test` 全新运行 → exit 0，**679 tests、1 skipped、0 failures**（verify-suite.log；skip 仍为 DockItemTests 无 bundle 用例）。
+- 打包产物亲验：build/Sunlight.app 无 Contents/Helpers、无 Library/LaunchDaemons，Info.plist 无 SUFeedURL/SUPublicEDKey，`codesign --verify --strict --deep` 通过；二进制 11:22 构建，晚于最后代码提交 e1f92b7（11:20），084ac6f 仅文档。
+- #1 亲验：TakeoverMode.swift 整文件删除（−339 行），Sources 内无 CFPreferencesSetAppValue/SMAppService.register/Spaces.fold 可达调用；`--release` 无操作；Uninstall/LegacyMigration/Stability.startGuard 仅剩定义无调用方。
+- #2 亲验：PermissionGate.swift 存在，App 启动/开关/状态变化均经 gate。
+- #8 亲验：AX 符号改 dlopen/dlsym 可选 + AXFrames 帧匹配兜底，id-only 问题答 nil；截图改 macOS14+ 公开 captureImage。
+- #11 亲验：package.sh 签名前拒绝 helper/LaunchDaemon/无 fork 公钥的 Sparkle 键；release.conf 四项置空；build-live-windows.sh 无 ALLOW_INJECTOR=1 即 exit 1。
+- #3–#6/#9/#10：CaptureBarrier、RestorePlacement 等已存在并接线，以 679 项测试（含新增用例）与第二轮 ledger 为据，未逐行复审——按既定流程不跑第二次整分支审查。
+- 结论：marvis 报告与仓库实际状态一致，无虚报。真机交互与 CPU/GPU/内存仍**未验收**；#12 仍 deferred。

@@ -2,6 +2,8 @@
 
 更新：2026-11-11。用户要求因 Qoder 额度有限停止实现，保存接手材料。本文记录的是**未完成、当前无法编译的开发现场**，不是发布说明。
 
+> **状态更新（2026-11-11 第二轮后）**：本文第 5 节描述的未编译补丁已由接手 agent（marvis）完成并分 13 个提交落地（`5c185f5..084ac6f`），审查 #1–#11 全部处理、#12 仍 deferred。Qoder 主会话已独立复核：全新 `swift test` 679 项、1 skipped、0 failures；`build/Sunlight.app` 无 Helpers/LaunchDaemons/Sparkle 键、codesign 通过且晚于最后代码提交；#1/#2/#8/#11 的关键 diff 已亲验。详见 [ledger](2026-11-11-tablecloth-ledger.md) 末尾两条记录。**仍未做：真机交互与资源实测（未验收）、发布。** 下文第 5–7 节保留为历史记录，接手者以 ledger 与当前代码为准。
+
 ## 1. 接手入口与权威顺序
 
 1. 阅读本文，以及 [已批准设计](specs/2026-11-10-tablecloth-design.md)、[实现计划](plans/2026-11-10-tablecloth.md)。
