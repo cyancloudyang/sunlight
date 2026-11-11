@@ -32,11 +32,14 @@ enum CanvasApp {
             }
         }
         if args.contains("--release") {
-            print("Tablecloth does not change system preferences or login items.")
+            print("Tablecloth does not change system preferences, login items or Stage Manager: nothing to release.")
             exit(0)
         }
         if args.contains("--status") {
-            TakeoverMode.printStatus()
+            // What the app can do, read from the two permissions it asks for. Nothing here changes the Mac.
+            let gate = PermissionGate.current()
+            print("Sunlight (Tablecloth) — Accessibility: \(gate.accessibility ? "granted" : "not granted"), "
+                  + "Screen Recording: \(gate.screenRecording ? "granted" : "not granted")")
             exit(0)
         }
         if args.contains("--help") || args.contains("-h") {

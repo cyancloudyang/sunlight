@@ -218,13 +218,10 @@ enum Stability {
         return 0
     }
 
-    /// What a quit would have put back: takeover's settings (the Dock restarts if they changed) and
-    /// Stage Manager. The login item and the opt-in stay, so the next launch takes over again.
-    @MainActor static func putMacBack() -> [String] {
-        var restored = TakeoverMode.revertPrefs().sorted()
-        if StageManager.restore() { restored.append("Stage Manager") }
-        return restored
-    }
+    /// What a quit would have put back. Tablecloth changes no system preference, no Stage Manager
+    /// setting and no login item, so there is nothing to put back: the guard records the run and that's
+    /// all. The closure stays a parameter so the recording path can be tested with its own answer.
+    @MainActor static func putMacBack() -> [String] { [] }
 
     // MARK: Safe mode
 

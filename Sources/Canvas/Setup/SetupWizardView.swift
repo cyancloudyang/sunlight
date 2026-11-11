@@ -274,18 +274,8 @@ struct SetupPageView: View {
         case .none:
             EmptyView()
         case .loginItem:
-            VStack(spacing: 6 * s) {
-                Toggle(isOn: $model.loginItem) {
-                    Text("Open Sunlight when I log in").font(.system(size: 15 * s, weight: .medium)).foregroundStyle(.primary.opacity(0.85))
-                }
-                .toggleStyle(.switch)
-                Text("Brings Sunlight, and this window, back by itself after the restart live windows need.")
-                    .font(.system(size: 13 * s))
-                    .foregroundStyle(.primary.opacity(0.45))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 480 * s)
-            }
-            .padding(.top, 28 * s)
+            // No login item is offered: Sunlight doesn't install one (`SetupWizard`'s page says so).
+            EmptyView()
         case .consent:
             Toggle(isOn: $model.consent) {
                 Text("I understand, and this is a Mac I'm comfortable changing")

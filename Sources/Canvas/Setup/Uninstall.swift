@@ -6,6 +6,13 @@ import AppKit
 /// step in Recovery, with setup's card turned around), then Sunlight itself to the Trash. This is the
 /// pure part: what's still installed, which step is next, the Terminal lines. `UninstallController`
 /// draws it and runs the buttons.
+/// What an earlier Sunlight wrote down about the Mac it changed. Read only: the uninstall uses it to say
+/// what is still to put back, and nothing writes it any more.
+private enum LegacyKeys {
+    static let applied = "takeover.applied"
+    static let merged = "takeover.mergedDesktops"
+}
+
 enum UninstallFlow {
     enum Step: String, CaseIterable, Sendable {
         case addOn, bootArgument, helper, protection, trash
@@ -108,7 +115,7 @@ enum UninstallFlow {
                       bootArguments: bootArguments(fromNvram: nvram.output, status: nvram.status),
                       helperRegistered: daemon == .enabled || daemon == .needsApproval,
                       loginItem: login == .enabled || login == .requiresApproval,
-                      takeoverApplied: UserDefaults.standard.bool(forKey: TakeoverMode.Keys.applied),
+                      takeoverApplied: UserDefaults.standard.bool(forKey: LegacyKeys.applied),
                       sipPartlyOff: SetupStatus.sipAllowsLiveWindows())
     }
 
@@ -349,7 +356,7 @@ final class UninstallController: NSWindowController, NSWindowDelegate {
         case .helper:
             var text = "Turns Sunlight off in System Settings › General › Login Items: the background helper that loaded live windows, and opening at login."
             if status.takeoverApplied { text += " Puts the Dock, Finder and Mission Control back as they were before Sunlight took over the Mac." }
-            if UserDefaults.standard.bool(forKey: TakeoverMode.Keys.merged) {
+            if UserDefaults.standard.bool(forKey: LegacyKeys.merged) {
                 text += " Desktops Sunlight merged into the canvas are not recreated: add them again in Mission Control if you want them."
             }
             views.append(Self.text(text))
