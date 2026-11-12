@@ -135,4 +135,9 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - 已 push origin（cyancloudyang/sunlight）tablecloth：0d54a41..3d37f44（第五轮 8 提交 4f37a71..3d37f44，含 #19 批量 AX 帧读 3d37f44 与本 ledger 更新）。未 push upstream（spacefarm-digital）。PR #1 仍 OPEN/draft（https://github.com/cyancloudyang/sunlight/pull/1），未合并、未发布。
 - 全套 `swift test`：706 tests、1 skipped、0 failures（skip 仍为 DockItemTests 无 bundle 用例）。编译警告均为既有 Swift 6 严格模式基线，本轮未新增。
 - 仍未验收（需用户真机再跑）：5 分钟静止 CPU/内存测量；#13/#14/#15/#16 的视觉观感（按钮落点、模糊梯度、入场拉远、⌘Tab 弧高）；#17 真实桌面系统交互（依赖系统 Show Desktop 快捷键启用）；#18/#19 卡顿降幅复测。一律不虚构数字、不宣称达标。
-- 后续候选（本轮未做，留用户决定是否授权更深线程 pass）：其余主线程 AXWindow.frame 同步点（isFullScreen/setPosition/setSize 未被 Watchdog 包裹）；listNow():2279 / snapshot():5642 的 WindowList.queue.sync 阻塞 hop；主 runloop 计时器合并。handoff/seam 精密，无第二次复核不宜贸然重构。
+- 后续候选（本轮未做，留用户决定是否授权更深线程 pass）：其余主线程 AXWindow.frame 同步点（isFullScreen/setPosition/setSize 未被 Watchdog 包裹）；listNow():2279 / snapshot():5642 的 WindowList.queue.sync 阻塞 hop。handoff/seam 精密，无第二次复核不宜贸然重构。
+- #19 后空闲开销排查（2026-11-12，仅读代码、未真机测量）：逐个核对全部重复 Timer 与 CADisplayLink 的生命周期——
+  - CanvasView 的 CADisplayLink 在 stopLinkIfIdle()（:1390）满足无 animation/flight/entrances/magnet/pipFlights/pending/coast/zoomCoast 且输入超过 inputLinger 时 `invalidate()` 并置 nil（彻底拆除，非仅 isPaused）；静止地图无逐帧回调。
+  - 所有 repeats:true 的 Timer 均已门控到活动态且自失效：enteredTimer(:7697,1s,tol0.25) 仅入场时；addingWidgetsTimer(:3518,0.25s) 仅小组件编辑；restoringTimer(:3893,0.5s) 仅布局恢复；passThroughTimer(:8246,1/60) 仅 live 模式穿透且 canPassThrough 假时不起；displayPoll(App:155,1s) 仅启动等屏；Settings DesktopMapRow refresh(:1646,1s) 仅该设置面板可见。
+  - 结论：默认快照地图静止时没有重复 Timer/DisplayLink 在跑，"主 runloop 计时器合并"对空闲 CPU 无收益，反增门控风险——本轮不做（从候选移除）。空闲 CPU≈0 是既有设计达成，非本轮新增；具体数字仍待真机测量，不虚构。
+  - 其余 AX 热路径：findNow 的 windowID 走可选私有 axUIElementGetWindow（直调，非 AX 属性 IPC，有公开 frame 匹配兜底），frame 匹配回退已受 #19 批量惠及（每候选 1 次而非 2 次）；isFullScreen/isMinimized 为单 bool 读且多在 AXQueue 后台，批量收益微、改语义有风险，不做。跨窗口批量无公开 API（AXUIElementCopyMultipleAttributeValues 只批量单元素的多属性）。
