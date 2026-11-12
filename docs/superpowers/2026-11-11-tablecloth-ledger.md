@@ -208,3 +208,21 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - 仍未验收（需用户真机再跑，ad-hoc 签名重建后须重新授予 Accessibility+Screen Recording）：#25 迁移真机效果；#23 慢速上滑手感、#24 单击滑入观感；及第五/六轮遗留真机项。一律不虚构数字、不宣称达标。
 - 深层方向（用户提及、本轮未做）：窗口卡片"更有真实物理交互手感"——待迁移验收后如需可单独 brainstorm。
 - #20 真机测量仍暂停。Deferred minors 沿用第五/六轮。
+
+## 默认手势修正（2026-11-12 第七轮补充，#26，TDD）
+
+用户真机再报：「四指上滑还是没能进入全览视角，还是普通高度平移」。系统排查（systematic-debugging）根因：`defaults read com.spacefarm.sunlight CanvasSeeAllGesture` 不存在 → getter 回退 `.tap`；tap 模式下四指上滑就是平移、永不 See All（日志全是 `Pan: four-finger drag`，无一条 See All）。#23 的去速度判定只作用于 `.swipeUp` 模式，接线（`followSetting` 读 `Settings.seeAllGesture == .swipeUp`）正确无误——不是代码 bug，是「用户已选上滑、但默认仍是 tap」的开箱落差。
+
+- #26 完成（bd19f28）：`Settings.seeAllGesture` getter 缺省回退由 `.tap` 改为 `.swipeUp`（key 不存在时即上滑模式）。UI picker（GestureGuide）、手势指南 `gestures(seeAll:)`、教程 `resolved(seeAll:)` 均动态读该值，自动随之显示「Four-finger swipe up」；Tutorial 一处过时注释「the tap by default」改为「swipe up by default」。tap 仍可在 Settings›How to use›Trackpad 选回。
+  - Ruling: 改默认而非仅让用户手动切设置 — 用户在 #23 已明确拍板「上滑即 See All」，默认留 .tap 等于该选择开箱不生效，正是本次报修；改默认才兑现其意图 — 代价：偏好「四指轻点=See All」的用户开箱变为上滑，需手动切回 tap；但这是用户个人 fork 且其已明示偏好，tap 仍可一键选回。
+  - Ruling: 此改动取代 #23 Ruling 中「默认仍 .tap，故默认行为不变」一句 — 默认行为自此改变（上滑即 See All），#23 的识别器逻辑不变 — 代价：无（识别器/测试不变，仅缺省值）。
+  - Ruling: 可逆、不动已保存状态 — 仅改 UserDefaults 缺省回退，不写任何 key、不触碰 Canvas.json/布局；用户现有显式设置（若有）原样优先 — 代价：无。满足「不擅自改已保存/手动状态、优先可逆」。
+  - 验证：SettingsTests 新增 testSeeAllGestureDefaultsToSwipeUpAndRoundTrips RED（"tap" is not equal to "swipeUp"）→GREEN；swift test 721 tests、1 skipped、0 failures。真机：当前运行中的旧 build 无需重建即可验证——在 Settings›How to use›Trackpad 把 See All gesture 切到「Four-finger swipe up」，上滑即应 See All（followSetting 监听通知即时生效）；新默认需重建+重 launch 才生效（ad-hoc 签名，重 launch 须重新授予 Accessibility+Screen Recording）。
+  - 环境注：`security find-identity -v -p codesigning` 返回 0 valid identities，故 make app 仍 ad-hoc；无稳定签名身份可让授权跨重建保留（不擅自创建证书/改钥匙串）。
+
+## 推送与验收状态（2026-11-12 #26 末）
+
+- 本轮提交：bd19f28（#26 默认上滑即 See All）+ 本 ledger 更新。待 push origin（cyancloudyang/sunlight）tablecloth；未 push upstream（spacefarm-digital）。PR #1 仍 OPEN/draft，未合并、未发布。
+- 全套 `swift test`：721 tests、1 skipped、0 failures（skip 仍为 DockItemTests 无 bundle 用例）。生产 Canvas 模块 Swift 5、测试 target Swift 6 严格模式；编译警告均为既有基线，本轮未新增。
+- 仍未验收（需用户真机）：#26 上滑默认即 See All（旧 build 切设置即可即时验证；新默认需重建重 launch+重授权）；#25 迁移真机效果；#23 慢速上滑手感、#24 单击滑入观感；及第五/六轮遗留真机项。一律不虚构数字、不宣称达标。
+- #20 真机测量仍暂停。Deferred minors 沿用第五/六轮。
