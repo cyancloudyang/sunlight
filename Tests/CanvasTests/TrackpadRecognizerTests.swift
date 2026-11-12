@@ -97,17 +97,19 @@ final class TrackpadRecognizerTests: XCTestCase {
         XCTAssertFalse(phases.contains(.ended))
     }
 
-    func testWithSwipeUpChosenASlowDragUpPans() {
+    func testWithSwipeUpChosenASlowSwipeUpIsAlsoSeeAll() {
+        // Three seconds, far slower than a flick: a deliberate swipe up still opens the whole canvas.
         let phases = touch(line(from: CGPoint(x: 0.5, y: 0.1), to: CGPoint(x: 0.5, y: 0.8), steps: 30), interval: 0.1, swipeUp: true)
         XCTAssertEqual(phases.first, .began)
-        XCTAssertEqual(phases.last, .ended)
-        XCTAssertFalse(phases.contains(.seeAll))
+        XCTAssertEqual(phases.last, .seeAll)
+        XCTAssertEqual(phases.filter { $0 == .seeAll }.count, 1)
+        XCTAssertFalse(phases.contains(.ended))
     }
 
-    func testWithSwipeUpChosenSpeedingUpLateIsStillADrag() {
+    func testWithSwipeUpChosenAnUpwardSwipeBecomesSeeAllWheneverItGathers() {
         let slow = line(from: CGPoint(x: 0.5, y: 0.2), to: CGPoint(x: 0.5, y: 0.25), steps: 6)
         let fast = line(from: CGPoint(x: 0.5, y: 0.25), to: CGPoint(x: 0.5, y: 0.6), steps: 6)
-        XCTAssertFalse(touch(slow + fast, interval: 0.1, swipeUp: true).contains(.seeAll))
+        XCTAssertTrue(touch(slow + fast, interval: 0.1, swipeUp: true).contains(.seeAll))
     }
 
     func testWithSwipeUpChosenATapDoesNothing() {
@@ -118,6 +120,19 @@ final class TrackpadRecognizerTests: XCTestCase {
         phases += r.update(device: 1, fingers: four, centroid: CGPoint(x: 0.5, y: 0.5), now: 0.1)
         phases += r.update(device: 1, fingers: [], centroid: .zero, now: 0.12)
         XCTAssertEqual(phases, [])
+    }
+
+    func testWithSwipeUpChosenAHorizontalDragStillPans() {
+        let phases = touch(line(from: CGPoint(x: 0.2, y: 0.5), to: CGPoint(x: 0.6, y: 0.52)), swipeUp: true)
+        XCTAssertEqual(phases.first, .began)
+        XCTAssertEqual(phases.last, .ended)
+        XCTAssertFalse(phases.contains(.seeAll))
+    }
+
+    func testWithSwipeUpChosenADiagonalDragStillPans() {
+        let phases = touch(line(from: CGPoint(x: 0.2, y: 0.2), to: CGPoint(x: 0.5, y: 0.5)), swipeUp: true)
+        XCTAssertEqual(phases.first, .began)
+        XCTAssertFalse(phases.contains(.seeAll))
     }
 
     // MARK: Drag
