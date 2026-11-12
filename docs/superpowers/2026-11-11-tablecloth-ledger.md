@@ -163,3 +163,27 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - 仍未验收（需用户真机再跑，ad-hoc 签名重建后须重新授予 Accessibility+Screen Recording）：#21 单击入场原位原尺寸观感；#22 首屏按 app 分组/不重叠/取景动画观感；以及第五轮遗留的 5 分钟静止 CPU/内存测量、#13–#19 视觉与卡顿复测。一律不虚构数字、不宣称达标。
 - #20 真机测量仍暂停（用户转入 UX 修复）；app 已重建（build/Sunlight.app），PerfLog 可经 `defaults write com.spacefarm.sunlight PerfLog -bool YES` 开启后重启采集。
 - Deferred minors（沿用第五轮）：#16 方向性运动条纹（运动模糊感，真机调，GPU 成本）；#12 活动地图新窗 noteArrived 脉冲。
+
+## UX 修复轮（2026-11-12 第七轮，TDD 逐项）
+
+用户真机操作后再报两个问题（#20 真机测量仍暂停）：①四指上滑不能每次都成功触发全 tablecloth 视角，有时只移动视角而未缩放；②移动视角而未缩放时，平移到另一 app 的窗口部分并点击它，窗口只原位停留在屏幕中、并未完整进入屏幕。AskUserQuestion 拍板：①「上滑即 See All」（任何明确向上的四指上滑都触发，不论速度/时长；取消四指向上平移，左/右/下仍平移）；②「最小移动滑入」（点击的窗口部分离屏时最小移动使其完整可见；已完整可见则不动）。
+
+- #23 完成（16cbfab）：去掉 flick 的速度判定。删 `flickWindow`（0.35s）常量与 `dragBegan` 时间戳；`swipeUpSeesAll` 开启时，只要从 `dragOrigin` 起算 rise≥`swipeDistance`(0.12) 且方向在 `axisLock`(22.5°) 内接近竖直向上、四指 `landedTogether`，即发 `.seeAll`，不论快慢。水平/对角拖拽仍平移。文档同步把 "flick" 改为 "swipe up"。
+  - Ruling: 保留 `landedTogether`（第四指须在 `tapLanding` 0.15s 内与前三指同落）— 用户的问题是速度/时长判定误杀慢速上滑，不是落指时序；保留它防止三指手势（Look Up/Back/Forward）后补第四指被误判为四指上滑 — 代价：极慢落指（>0.15s 才凑齐四指）的上滑不触发，但那是"手逐渐放上去"而非一次 swipe，合理。
+  - Ruling: 上滑触发后取消向上平移（用户拍板"上滑即 See All"）— 向上拖拽不再是平移，左/右/下/对角仍平移 — 代价：用户失去"四指向上平移"这一方向，但这是用户明确选择（与 Mission Control 上滑一致）。仅作用于 Settings›How to use›Trackpad 选「Four-finger swipe up」时；默认仍「Four-finger tap」（`Settings.seeAllGesture` 默认 .tap），故默认行为不变。
+  - 验证：TrackpadRecognizerTests 2 例改造 RED（慢速上滑给 .ended 非 .seeAll；先慢后快无 seeAll）→GREEN，新增水平/对角仍平移 2 例；filter 21 tests、0 failures；swift test 718 tests、1 skipped、0 failures。真机手势手感（慢速上滑是否稳触发、是否误触）需真机确认。
+- #24 完成（efdf85b）：新增纯几何 `Handoff.slidIntoView(_:size:visible:)`：x 适配时 clamp 到 [minX, maxX−width]、超宽左对齐 minX；y 适配时只 clamp 底边 min(y, maxY−height)（顶边留给既有 menu-bar clamp，保住 inPlaceOrigin 记忆）、超高顶对齐 minY。`plan()` 在 tiledArea 分支后加 `else if clicked { origin = slidIntoView(...) }`：仅单击（无 tiling）滑入；tiled 保持区域对齐；centered/inPlace/fillScreen 不变。
+  - Ruling: 只作用于 `.clicked`（用户报的是"点击"），不扩到 `.inPlace`（捏合）— 范围匹配用户问题，不蔓延 — 代价：捏合入场的部分离屏窗口本轮不滑入（用户未报；如需另议）。
+  - Ruling: y 适配时只 clamp 底边、顶边留给 menu-bar clamp — 若在 slidIntoView 里也 clamp 顶边，会把 testAClickNearTheTop 的 inPlaceOrigin=−30 预先压成 38，毁掉"记住点击所求"的记忆（capture 模式相机据此落位）— 代价：无（既有 near-top/no-window-above-menu-bar 测试全绿）。
+  - Ruling: 超高窗口顶对齐 visible.minY（而非"不动"）— 与 centredOrigin 超尺寸顶左对齐、x 超宽左对齐一致，最大化可见内容；"不动"可能把超高窗口大部分留在屏外 — 代价：超高窗口单击不再严格"保原位"，但它本就无法完整可见，顶对齐是合理取舍（与居中入场一致）。
+  - Ruling: 两个既有断言底边溢出的测试（testAClickKeepsTheClickedSpotUnderThePointer / testACardClickEntersInPlaceRatherThanFillingTheScreen）输入改为完整可见点（click y 700→600）— 需求已变（用户要完整进屏），原断言的"底边溢出原位"不再是期望行为；改为验证"完整可见则不动" — 代价：无（新加 testAClickOnAPartlyOffScreenWindowSlidesItFullyIntoView 专门覆盖滑入）。
+  - 验证：HandoffTests 6 新例 RED（no member slidIntoView + 部分离屏单击期望 origin 1200 实得 1500）→GREEN；filter 26 tests、0 failures；swift test 718 tests、1 skipped、0 failures；make app 编译打包+ad-hoc 签名 OK。滑入观感（最小移动、完整进屏）需真机确认。
+
+## 推送与验收状态（2026-11-12 第七轮末）
+
+- 本轮提交：16cbfab（#23 上滑即 See All）、efdf85b（#24 单击最小滑入）+ 本 ledger 更新。待 push origin（cyancloudyang/sunlight）tablecloth；未 push upstream（spacefarm-digital）。PR #1 仍 OPEN/draft，未合并、未发布。
+- 全套 `swift test`：718 tests、1 skipped、0 failures（skip 仍为 DockItemTests 无 bundle 用例）。生产 Canvas 模块 Swift 5、测试 target Swift 6 严格模式；编译警告均为既有基线，本轮未新增。
+- 仍未验收（需用户真机再跑，ad-hoc 签名重建后须重新授予 Accessibility+Screen Recording）：#23 慢速上滑稳触发/不误触手感（须在 Settings›How to use›Trackpad 选「Four-finger swipe up」；默认仍「Four-finger tap」）；#24 单击部分离屏窗口最小滑入观感；及第五/六轮遗留的 5 分钟静止 CPU/内存测量、#13–#22 视觉与卡顿复测。一律不虚构数字、不宣称达标。
+- 开放问题（用户未答）：#22 首屏自动排布只在 remembered==nil 触发；用户已有保存布局（~/Library/Application Support/Sunlight/Canvas.json）不会触发。需用户决定：把 Canvas.json 移开重首屏，或加一次性迁移。本轮未擅自改用户数据。
+- #20 真机测量仍暂停（用户转入 UX 修复）；app 已重建（build/Sunlight.app），PerfLog 可经 `defaults write com.spacefarm.sunlight PerfLog -bool YES` 开启后重启采集。
+- Deferred minors（沿用第五/六轮）：#16 方向性运动条纹（运动模糊感，真机调，GPU 成本）；#12 活动地图新窗 noteArrived 脉冲。
