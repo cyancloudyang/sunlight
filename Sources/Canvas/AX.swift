@@ -42,6 +42,22 @@ enum AXFrames {
     }
 }
 
+/// A frame from a batched Accessibility read of position and size together.
+enum AXFrame {
+    /// The frame from `[position, size]` AXValues, or nil if either is missing or the wrong kind. A
+    /// batched read (`AXUIElementCopyMultipleAttributeValues`) wraps a failed attribute as an AXValue of
+    /// type `axError` (or CFNull), so the type check in `AXValueGetValue` rejects it rather than reading
+    /// garbage — the caller then falls back to single reads.
+    static func parse(_ values: [AXValue]) -> CGRect? {
+        guard values.count == 2 else { return nil }
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(values[0], .cgPoint, &origin),
+              AXValueGetValue(values[1], .cgSize, &size) else { return nil }
+        return CGRect(origin: origin, size: size)
+    }
+}
+
 /// The queues Accessibility is talked to on. Every call is a round trip to another process, which
 /// may be busy or hung for up to the timeout; none of that belongs on the main thread. Two queues,
 /// serial, so a batch of warm-ups stuck on a hung app can't delay the lookup a click is waiting on.
@@ -231,6 +247,17 @@ struct AXWindow: @unchecked Sendable {
 extension AXUIElement {
     /// Top-left screen coordinates, points.
     var frame: CGRect? {
+        // Position and size in one round trip, not two: a busy app holds each Accessibility call up to
+        // the messaging timeout, so batching halves the worst-case wait on every frame read.
+        var ref: CFArray?
+        let status = AXUIElementCopyMultipleAttributeValues(self, [kAXPositionAttribute, kAXSizeAttribute] as CFArray, [], &ref)
+        if status == .success, let values = ref as? [AXValue], let frame = AXFrame.parse(values) {
+            return frame
+        }
+        // No answer (a busy app, a dead element): nil, as the two single reads would give, for one wait
+        // instead of two. Only retry singly when the app answered but the batch carried an unusable
+        // value (an attribute this element doesn't serve), which the single reads may still serve.
+        guard status == .success else { return nil }
         guard let origin: CGPoint = value(kAXPositionAttribute, .cgPoint, CGPoint.zero),
               let size: CGSize = value(kAXSizeAttribute, .cgSize, CGSize.zero) else { return nil }
         return CGRect(origin: origin, size: size)
