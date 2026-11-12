@@ -125,10 +125,14 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
   - Ruling: 默认 capture 模式此前对已入场窗口直接同步读 `p.ax?.frame`（旧注释误以为 capture 模式"无列表可读"，但入场窗口此刻在屏、列表必有其帧）— 改为与 live 模式一致优先列表，AX 仅惰性兜底 — 代价：capture 返回多读一次全量列表（~1ms）换掉最坏 ~1s 的 AX IPC；空列表帧改回退 AX（此前选中后再被下游 hasSize 拒绝）属严格改进。卡顿降幅需真机复测确认（不虚构 CPU/内存数字）。
   - Ruling: 本轮只做这一处有日志实证、低风险、可纯函数测试的卡顿修复；其余主线程 AXWindow.frame 同步点与 listNow/snapshot 的 WindowList.queue.sync 列为后续候选，不在无第二次复核下贸然做线程重构（handoff/seam 逻辑精密）— 代价：其余 510–840ms 卡顿本轮未动。
   - 验证：ReturnFrameTests 3 例 RED（cannot find ReturnFrame）→GREEN；swift test 702 tests、1 skipped、0 failures。
+- #19 完成（3d37f44）：`AXUIElement.frame` 由两次 AX IPC（kAXPositionAttribute、kAXSizeAttribute）改为公开 API `AXUIElementCopyMultipleAttributeValues` 一次批量读位置+尺寸。新增纯函数 `AXFrame.parse([AXValue]) -> CGRect?`，用 `AXValueGetValue` 的类型校验拒绝批量里失败属性返回的 axError/CFNull 包装值。每次帧读取的最坏等待从两次 messaging timeout 降到一次。
+  - Ruling: 批量失败（busy app/dead element）直接返回 nil（一次等待，优于原来两次），仅当 app 已应答但批量携带不可用值（该元素不提供某属性）才回退单读 — 避免给 busy app 增加第三次往返；线程/时序不变，是带兜底的安全 drop-in，不触碰精密 handoff/seam — 代价：极罕见"批量成功但某属性单读可服务"的情形多一次批量往返（仍≤原两次）。最坏卡顿降幅需真机复测（不虚构数字）。
+  - Ruling: 公开 API 可用性已核 SDK 头（AXUIElement.h:244，CF_AVAILABLE_MAC(10_4)；options=0 时失败属性以 kAXValueAXErrorType/CFNull 返回）— 非私有 API，符合硬约束 — 代价：无。
+  - 验证：AXFrameTests 4 例 RED（cannot find AXFrame）→GREEN（含 testRejectsABatchedErrorValue 用真实 AXValueCreate(.axError)）；swift test 706 tests、1 skipped、0 failures。
 
 ## 推送与验收状态（2026-11-11 第五轮末）
 
-- 已 push origin（cyancloudyang/sunlight）tablecloth：0d54a41..c88e887（本轮 7 提交 4f37a71..c88e887）。未 push upstream（spacefarm-digital）。PR #1 仍 OPEN/draft（https://github.com/cyancloudyang/sunlight/pull/1），未合并、未发布。
-- 全套 `swift test`：702 tests、1 skipped、0 failures（skip 仍为 DockItemTests 无 bundle 用例）。136 条编译警告均为既有 Swift 6 严格模式基线，本轮未新增。
-- 仍未验收（需用户真机再跑）：5 分钟静止 CPU/内存测量；#13/#14/#15/#16 的视觉观感（按钮落点、模糊梯度、入场拉远、⌘Tab 弧高）；#17 真实桌面系统交互（依赖系统 Show Desktop 快捷键启用）；#18 卡顿降幅复测。一律不虚构数字、不宣称达标。
-- #18 后续候选（本轮未做，留用户决定是否授权更深线程 pass）：其余主线程 AXWindow.frame 同步点；listNow():2279 / snapshot():5642 的 WindowList.queue.sync 阻塞 hop；主 runloop 计时器合并。handoff/seam 精密，无第二次复核不宜贸然重构。
+- 已 push origin（cyancloudyang/sunlight）tablecloth：0d54a41..3d37f44（第五轮 8 提交 4f37a71..3d37f44，含 #19 批量 AX 帧读 3d37f44 与本 ledger 更新）。未 push upstream（spacefarm-digital）。PR #1 仍 OPEN/draft（https://github.com/cyancloudyang/sunlight/pull/1），未合并、未发布。
+- 全套 `swift test`：706 tests、1 skipped、0 failures（skip 仍为 DockItemTests 无 bundle 用例）。编译警告均为既有 Swift 6 严格模式基线，本轮未新增。
+- 仍未验收（需用户真机再跑）：5 分钟静止 CPU/内存测量；#13/#14/#15/#16 的视觉观感（按钮落点、模糊梯度、入场拉远、⌘Tab 弧高）；#17 真实桌面系统交互（依赖系统 Show Desktop 快捷键启用）；#18/#19 卡顿降幅复测。一律不虚构数字、不宣称达标。
+- 后续候选（本轮未做，留用户决定是否授权更深线程 pass）：其余主线程 AXWindow.frame 同步点（isFullScreen/setPosition/setSize 未被 Watchdog 包裹）；listNow():2279 / snapshot():5642 的 WindowList.queue.sync 阻塞 hop；主 runloop 计时器合并。handoff/seam 精密，无第二次复核不宜贸然重构。
