@@ -39,8 +39,9 @@ final class HandoffTests: XCTestCase {
     }
 
     func testAClickKeepsTheClickedSpotUnderThePointer() {
-        let p = plan(.clicked(at: CGPoint(x: 1000, y: 700), offset: CGPoint(x: 100, y: 50)))
-        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 650))
+        // The window is wholly on screen, so it stays put and the clicked spot stays under the pointer.
+        let p = plan(.clicked(at: CGPoint(x: 1000, y: 600), offset: CGPoint(x: 100, y: 50)))
+        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 550))
         XCTAssertEqual(p.inPlaceOrigin, p.origin)
         XCTAssertTrue(p.clicked)
         XCTAssertNotNil(p.inPlace)
@@ -68,11 +69,60 @@ final class HandoffTests: XCTestCase {
     func testACardClickEntersInPlaceRatherThanFillingTheScreen() {
         // A click on a map card keeps the window's own size and place — the clicked spot stays under the
         // pointer — rather than the fill-screen entry, which resizes the app to the visible frame.
-        let placement = Handoff.cardClick(at: CGPoint(x: 1000, y: 700), offset: CGPoint(x: 100, y: 50))
+        let placement = Handoff.cardClick(at: CGPoint(x: 1000, y: 600), offset: CGPoint(x: 100, y: 50))
         let p = plan(placement)
         XCTAssertNotNil(p.inPlace, "a card click keeps the window's place; it does not fill the screen")
         XCTAssertTrue(p.clicked)
-        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 650))
+        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 550))
+    }
+
+    // MARK: Sliding a clicked window fully into view
+
+    func testSlidIntoViewLeavesAFullyVisibleWindowWhereItIs() {
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: 350), size: CGSize(width: 800, height: 600), visible: visible),
+                       CGPoint(x: 900, y: 350))
+    }
+
+    func testSlidIntoViewPushesEachOverhangingEdgeJustInside() {
+        let size = CGSize(width: 800, height: 600)
+        // Off the right edge: slide left until the right edge meets the screen's (2000 − 800 = 1200).
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 1500, y: 350), size: size, visible: visible), CGPoint(x: 1200, y: 350))
+        // Off the left edge: slide right to the screen's left.
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: -300, y: 350), size: size, visible: visible), CGPoint(x: 0, y: 350))
+        // Off the bottom: slide up until the bottom edge meets the screen's (38 + 1162 − 600 = 600).
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: 650), size: size, visible: visible), CGPoint(x: 900, y: 600))
+    }
+
+    func testSlidIntoViewLeavesTheTopToTheMenuBar() {
+        // Above the menu bar: the slide doesn't touch the top — the menu-bar clamp does that later, so the
+        // plan can still remember where the click asked (inPlaceOrigin).
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: -30), size: CGSize(width: 800, height: 600), visible: visible),
+                       CGPoint(x: 900, y: -30))
+    }
+
+    func testSlidIntoViewAlignsAnOversizedWindowToTheLeadingEdges() {
+        // Wider than the screen: left-align, as a centred oversized window does.
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: 350), size: CGSize(width: 2400, height: 600), visible: visible),
+                       CGPoint(x: 0, y: 350))
+        // Taller than the screen: top-align (the menu bar's height), so the top of it is on show.
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: 350), size: CGSize(width: 800, height: 1400), visible: visible),
+                       CGPoint(x: 900, y: 38))
+    }
+
+    func testAClickOnAPartlyOffScreenWindowSlidesItFullyIntoView() {
+        // The proxy was clicked near the right edge: at 1:1 the window would hang off the right, so it
+        // slides left just enough to be wholly on screen, and still keeps its place (inPlace).
+        let p = plan(.clicked(at: CGPoint(x: 1600, y: 400), offset: CGPoint(x: 100, y: 50)))
+        XCTAssertEqual(p.origin, CGPoint(x: 1200, y: 350))
+        XCTAssertTrue(p.clicked)
+        XCTAssertNotNil(p.inPlace)
+        XCTAssertEqual(p.inPlaceOrigin, p.origin)
+    }
+
+    func testAClickOnAFullyVisibleWindowKeepsItExactlyWhereItIs() {
+        let p = plan(.clicked(at: CGPoint(x: 1000, y: 400), offset: CGPoint(x: 100, y: 50)))
+        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 350))
+        XCTAssertEqual(p.inPlaceOrigin, p.origin)
     }
 
     // MARK: Filling the screen

@@ -93,6 +93,10 @@ enum Handoff {
         if let area = tiledArea {
             origin = CGPoint(x: visible.minX + rect.minX - area.minX, y: visible.minY + rect.minY - area.minY)
             keepsPlace = true
+        } else if clicked {
+            // A click on a partly off-screen window slides it the least it takes to be wholly on show;
+            // one already in view stays exactly where the clicked spot put it.
+            origin = slidIntoView(origin, size: rect.size, visible: visible)
         }
         origin = pixelAligned(origin, scale: scale)
         let inPlace = keepsPlace ? Camera(origin: CGPoint(x: rect.minX - origin.x, y: rect.minY - origin.y), zoom: 1) : nil
@@ -130,6 +134,18 @@ enum Handoff {
         if rect.width > visible.width { origin.x = visible.minX }
         if rect.height > visible.height { origin.y = visible.minY }
         return origin
+    }
+
+    /// Slide a clicked window the least it takes to be wholly on screen: each overhanging edge is pushed
+    /// just inside, a window already in view doesn't move. A window bigger than the screen can't be made
+    /// whole, so it aligns to the leading edges, as a centred one does. The top of a window that fits is
+    /// left alone here — the menu-bar clamp takes it later, so the plan still remembers where the click
+    /// asked (`inPlaceOrigin`).
+    static func slidIntoView(_ origin: CGPoint, size: CGSize, visible: CGRect) -> CGPoint {
+        var o = origin
+        o.x = size.width <= visible.width ? min(max(o.x, visible.minX), visible.maxX - size.width) : visible.minX
+        o.y = size.height <= visible.height ? min(o.y, visible.maxY - size.height) : visible.minY
+        return o
     }
 
     /// Where a window sits natively when the canvas is at `camera`: its canvas place through the
