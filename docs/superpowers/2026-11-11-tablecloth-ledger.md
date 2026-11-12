@@ -187,3 +187,24 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - 开放问题（用户未答）：#22 首屏自动排布只在 remembered==nil 触发；用户已有保存布局（~/Library/Application Support/Sunlight/Canvas.json）不会触发。需用户决定：把 Canvas.json 移开重首屏，或加一次性迁移。本轮未擅自改用户数据。
 - #20 真机测量仍暂停（用户转入 UX 修复）；app 已重建（build/Sunlight.app），PerfLog 可经 `defaults write com.spacefarm.sunlight PerfLog -bool YES` 开启后重启采集。
 - Deferred minors（沿用第五/六轮）：#16 方向性运动条纹（运动模糊感，真机调，GPU 成本）；#12 活动地图新窗 noteArrived 脉冲。
+
+## 一次性迁移（2026-11-12 第七轮补充，#25，TDD）
+
+用户澄清深层意图：要窗口卡片"不堆在一起、更有真实物理交互感"，并明确选择「自动一次性迁移」（而非移开 Canvas.json）。据此把 #22 的"仅 remembered==nil 才排"改为"从未自动排布过就排一次（不论有无保存布局），打标后尊重手动"。
+
+- #25 完成（e757e4a）：新增持久化标记 `Settings.didAutoArrange`（UserDefaults key "CanvasDidAutoArrange"，默认 false，仿 LegacyMigration.doneKey 模式）。`FirstArrangement.shouldArrange` 参数由 `remembered:` 改为 `alreadyArranged:`（body 仍 `!x`，语义从"无保存布局"变为"从未自动排过"）。`autoArrangeFirstCanvas()` 改守 `Settings.didAutoArrange`，layOutTidy 成功后置 true。两处 first-sync 钩子（live :2474 / capture :2642）把分支重排为 `if !autoArrangeFirstCanvas() { if placed, let camera … { animateCamera } else { fitAll } }`——一次性排布优先于"恢复保存相机"，仅那次；打标后走原恢复路径。
+  - Ruling: 用 UserDefaults 标记而非改 Layout 模型 — 仿既有 LegacyMigration（doneKey）一次性迁移模式，附加式、不触碰 Canvas.json 结构/编解码，旧布局文件原样可读 — 代价：标记在 defaults 域而非布局文件里，若用户只删 Canvas.json 不删 defaults 则标记仍在（不会重排）；这正是"严格一次"所要。
+  - Ruling: 触发门从 remembered==nil 改为 !didAutoArrange，并把 autoArrange 提到 saved-camera 恢复之前 — 旧逻辑下"有保存布局+保存相机"分支直接 animateCamera、永不 autoArrange，故迁移必须抢先一次；重排对 flag=true 情形行为不变（autoArrange 返回 false→原恢复路径），对全新用户也不变（placed=false→autoArrange）— 代价：无（既有 first-sync 语义保留）。
+  - Ruling: 仅在 layOutTidy 成功（有 standsAlone 窗口）时打标 — 标记意为"确已排过一次"；首屏无独立窗口（全 widget/attached）的极罕见情形不打标，但 didInitialFit 已门控、本次启动不再重试 — 代价：该极罕见情形本次启动不排（与 #22 既有的 first-sync-only 限制一致）；用户实际场景首屏即有 app 窗口，迁移会触发。
+  - Ruling: 复用 layOutTidy 故迁移可 ⌘Z 撤销（名 "Tidy"）、相机同 motion 取景、rememberSoon 持久化 — 与手动 Tidy/首屏排布完全同路径，真实窗口经既有 canvas→real 同步随动 — 代价：无。满足"可撤销、不擅自不可逆改数据"。
+  - Ruling: 范围只做迁移；用户提到的"更有真实物理交互手感"是更大方向，本轮不顺手扩入（无 brainstorm/设计），迁移完成后可另议 — 代价：物理手感本轮未动，已明示。
+  - 验证：FirstArrangementTests 改 2 例 + SettingsTests 新增 testDidAutoArrangeDefaultsOffAndRoundTrips RED（no member didAutoArrange / 错参数标签）→GREEN；swift test 720 tests、1 skipped、0 failures；make app 编译打包+ad-hoc 签名 OK。迁移真机效果（旧布局首屏被按 app 排一次、之后尊重手动、⌘Z 可回退）需用户真机确认。
+
+## 推送与验收状态（2026-11-12 #25 末）
+
+- 本轮提交：e757e4a（#25 一次性迁移）+ 本 ledger 更新。待 push origin（cyancloudyang/sunlight）tablecloth；未 push upstream（spacefarm-digital）。PR #1 仍 OPEN/draft，未合并、未发布。
+- 全套 `swift test`：720 tests、1 skipped、0 failures（skip 仍为 DockItemTests 无 bundle 用例）。生产 Canvas 模块 Swift 5、测试 target Swift 6 严格模式；编译警告均为既有基线，本轮未新增。
+- #22 遗留开放问题已解决：用户选「自动一次性迁移」，#25 实现之；不再需要用户移开 Canvas.json。用户现有保存布局将在升级后首屏被按 app 排一次（可 ⌘Z 撤销），打标后尊重手动。
+- 仍未验收（需用户真机再跑，ad-hoc 签名重建后须重新授予 Accessibility+Screen Recording）：#25 迁移真机效果；#23 慢速上滑手感、#24 单击滑入观感；及第五/六轮遗留真机项。一律不虚构数字、不宣称达标。
+- 深层方向（用户提及、本轮未做）：窗口卡片"更有真实物理交互手感"——待迁移验收后如需可单独 brainstorm。
+- #20 真机测量仍暂停。Deferred minors 沿用第五/六轮。
