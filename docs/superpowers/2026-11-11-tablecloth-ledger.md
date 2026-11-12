@@ -141,3 +141,25 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
   - 所有 repeats:true 的 Timer 均已门控到活动态且自失效：enteredTimer(:7697,1s,tol0.25) 仅入场时；addingWidgetsTimer(:3518,0.25s) 仅小组件编辑；restoringTimer(:3893,0.5s) 仅布局恢复；passThroughTimer(:8246,1/60) 仅 live 模式穿透且 canPassThrough 假时不起；displayPoll(App:155,1s) 仅启动等屏；Settings DesktopMapRow refresh(:1646,1s) 仅该设置面板可见。
   - 结论：默认快照地图静止时没有重复 Timer/DisplayLink 在跑，"主 runloop 计时器合并"对空闲 CPU 无收益，反增门控风险——本轮不做（从候选移除）。空闲 CPU≈0 是既有设计达成，非本轮新增；具体数字仍待真机测量，不虚构。
   - 其余 AX 热路径：findNow 的 windowID 走可选私有 axUIElementGetWindow（直调，非 AX 属性 IPC，有公开 frame 匹配兜底），frame 匹配回退已受 #19 批量惠及（每候选 1 次而非 2 次）；isFullScreen/isMinimized 为单 bool 读且多在 AXQueue 后台，批量收益微、改语义有风险，不做。跨窗口批量无公开 API（AXUIElementCopyMultipleAttributeValues 只批量单元素的多属性）。
+
+## UX 修复轮（2026-11-12 第六轮，TDD 逐项）
+
+用户真机操作后报两个反直觉问题（暂停 #20 真机测量转入本轮）：①不管 app 原 size 如何，点卡片切入后都铺满全屏、改掉原尺寸；②四指上滑进全 tablecloth 视角后各 app 不自动排布、仍互相重叠，应按 app 分类/关联排布。AskUserQuestion 拍板：①「原尺寸·停在卡片原位」（不 resize）；②「按 app 分组+不重叠」；时机「仅首次·之后尊重手动」。
+
+- #21 完成（44d0f62）：单击地图卡片不再 `.fillScreen`（铺满+改尺寸），改走 `Handoff.cardClick(at:offset:)` → `.clicked`，围绕点击点 1:1 入场、保留窗口自身尺寸与原位。新增纯政策 `Handoff.cardClick`（薄包装，记录"卡片单击=原位原尺寸"这一决策，与既有 NewWindowSpot/ReturnFrame 同款）。`.fillScreen` 路径保留（handoff 默认参/onPipReturn 仍用）。live 路径 .singleClick 本就用 .clicked，不变。
+  - Ruling: 用既有 `.clicked` placement 而非新写一套入场几何 — 它已"围绕点击点放大到 1:1、保尺寸、保原位"，正是用户要的；只把 onClickEnter 的 placement 从 fillScreen 换成 cardClick — 代价：无（.clicked 已被 testAClickKeepsTheClickedSpotUnderThePointer 等覆盖）。双击/⏎/切换器仍 .centered（原尺寸居中），不变。
+  - 验证：HandoffTests.testACardClickEntersInPlaceRatherThanFillingTheScreen RED（no member cardClick）→GREEN；swift test 707 tests、1 skipped、0 failures。入场观感（原位原尺寸）需真机确认。
+- #22 完成（9fbec70）：首次进图（无保存布局）自动按 app 分组、各保原尺寸、互不重叠。新增纯政策 `FirstArrangement`（Tidy.swift）：`shouldArrange(remembered:) = !remembered`、`options(spacing:) = Tidy.Options(columns:0, sizing:.keep, order:.app, spacing:)`。控制器把 `tidy()` 的网格主体抽成 `layOutTidy(_ options:) -> Bool`（原样复用：聚 item/成组、Tidy.layout、移动真实窗口、相机同motion取景、rememberSoon），`tidy()` 仍守 Settings.arranging/isActive 后调它；新增 `autoArrangeFirstCanvas()`（无 remembered 才调 layOutTidy）。两处 first-sync 钩子（:2476/:2644）的 else 分支改 `else if !autoArrangeFirstCanvas() { view.fitAll(animated:true) }`。
+  - Ruling: 复用既有 Tidy 引擎而非 NewWindowSpot — Tidy.Order.app 已"同 app 并排、app 按首窗出现序"，Sizing.keep 已"列取最宽/行取最高、不 resize、永不重叠"，正是用户两要求；NewWindowSpot 是单窗增量避碰、非全局打包 — 代价：无（Tidy 引擎已被 TidyTests 覆盖：testByAppKeepsAnAppTogether…/testKeepSizesNeverOverlaps/…WithoutResizing）。
+  - Ruling: 触发条件用 `remembered == nil`（desk?.remembered）而非 `!placed` — 有保存布局但本批窗口尚未匹配（apps 仍在启动）时 placed 亦 false，此时应等 placeRemembered 逐步放回、不该自动重排；remembered==nil 才是真·首次 — 代价：无。仅 first-sync（didInitialFit 外层门控）触发一次；layOutTidy 的 rememberSoon 持久化结果，下次 remembered!=nil → 不再自动排、尊重手动。
+  - Ruling: 自动排布不守 Settings.arranging（实验开关，默认关）— 这是 Tablecloth 核心首屏行为、非实验 Tidy 功能；layOutTidy 本身无 arranging 门控，公共 tidy() 仍守 — 代价：无（用户明确要首屏自动排布）。自动排布注册 ⌘Z undo（名 "Tidy"），用户可撤销回桌面原 pile，合理。
+  - Ruling: 真实窗口随动走既有机制 — layOutTidy 的 place(at:) 置 owner=.canvas+worldRect，真实窗口经既有 canvas→real 同步跟随（与手动 Tidy 完全同路径）；standsAlone 排除 widget/attached，故"widgets stay"不变 — 代价：无。首屏真实窗口被移到网格是用户明确要求。
+  - 验证：FirstArrangementTests 3 例 RED（cannot find FirstArrangement）→GREEN（含 testOverlappingWindowsEndUpSeparatedAndGroupedByApp 用真实 Tidy 验"重叠输入→不重叠+保尺寸+按 app 成块"）；swift test 710 tests、1 skipped、0 failures。make app 编译打包+ad-hoc 签名 OK，codesign --verify --deep --strict OK，无 SUFeedURL/SUPublicEDKey（安全态）。首屏排布观感（分组/间距/取景）需真机确认。
+
+## 推送与验收状态（2026-11-12 第六轮末）
+
+- 本轮提交：44d0f62（#21 卡片单击原位原尺寸）、9fbec70（#22 首屏按 app 自动排布）+ 本 ledger 更新。待 push origin（cyancloudyang/sunlight）tablecloth；未 push upstream（spacefarm-digital）。PR #1 仍 OPEN/draft，未合并、未发布。
+- 全套 `swift test`：710 tests、1 skipped、0 failures（skip 仍为 DockItemTests 无 bundle 用例）。生产 Canvas 模块 Swift 5、测试 target Swift 6 严格模式；编译警告均为既有基线，本轮未新增。
+- 仍未验收（需用户真机再跑，ad-hoc 签名重建后须重新授予 Accessibility+Screen Recording）：#21 单击入场原位原尺寸观感；#22 首屏按 app 分组/不重叠/取景动画观感；以及第五轮遗留的 5 分钟静止 CPU/内存测量、#13–#19 视觉与卡顿复测。一律不虚构数字、不宣称达标。
+- #20 真机测量仍暂停（用户转入 UX 修复）；app 已重建（build/Sunlight.app），PerfLog 可经 `defaults write com.spacefarm.sunlight PerfLog -bool YES` 开启后重启采集。
+- Deferred minors（沿用第五轮）：#16 方向性运动条纹（运动模糊感，真机调，GPU 成本）；#12 活动地图新窗 noteArrived 脉冲。
