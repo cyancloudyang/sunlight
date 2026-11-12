@@ -2473,9 +2473,11 @@ final class CanvasController {
             placeNewWindows(free, arriving: arriving)
             if !didInitialFit, !proxies.isEmpty {
                 didInitialFit = true
-                if placed, let camera = remembered?.camera(for: display.uuid, lead: isLead, viewSize: view.bounds.size) {
-                    view.animateCamera(to: camera)
-                } else if !autoArrangeFirstCanvas() { view.fitAll(animated: true) }
+                if !autoArrangeFirstCanvas() {
+                    if placed, let camera = remembered?.camera(for: display.uuid, lead: isLead, viewSize: view.bounds.size) {
+                        view.animateCamera(to: camera)
+                    } else { view.fitAll(animated: true) }
+                }
                 onFirstSync?()
             } else if pendingFitAll, !proxies.isEmpty {
                 pendingFitAll = false
@@ -2641,12 +2643,14 @@ final class CanvasController {
         if created > 0 { layoutStripWhenIdle() }
         if !didInitialFit, !proxies.isEmpty {
             didInitialFit = true
-            if placed, let camera = remembered?.camera(for: display.uuid, lead: isLead, viewSize: view.bounds.size) {
-                // The canvas as it was last run, seen as it was.
-                view.animateCamera(to: camera)
-            } else if !autoArrangeFirstCanvas() {
-                // First sync: the canvas is the desktop at 1:1. Pull back a little so it reads as a canvas.
-                view.fitAll(animated: true)
+            if !autoArrangeFirstCanvas() {
+                if placed, let camera = remembered?.camera(for: display.uuid, lead: isLead, viewSize: view.bounds.size) {
+                    // The canvas as it was last run, seen as it was.
+                    view.animateCamera(to: camera)
+                } else {
+                    // First sync: the canvas is the desktop at 1:1. Pull back a little so it reads as a canvas.
+                    view.fitAll(animated: true)
+                }
             }
             onFirstSync?()
         } else if pendingFitAll, !proxies.isEmpty {
@@ -4593,12 +4597,16 @@ final class CanvasController {
         return true
     }
 
-    /// The first canvas with nothing remembered: group the windows by app, each at its own size, never
-    /// overlapping (`FirstArrangement`, `Tidy`), and frame the result. False when there's a saved layout to
-    /// respect or nothing to arrange, so the caller falls back to fitting everything in view.
+    /// The one-time auto-arrange: group the windows by app, each at its own size, never overlapping
+    /// (`FirstArrangement`, `Tidy`), and frame the result — on the first canvas after this feature shipped,
+    /// whether fresh or a saved layout from before that was never arranged. Marks it done so the user's
+    /// moves win after. False when already done or nothing to arrange, so the caller restores the saved
+    /// camera or fits everything in view.
     private func autoArrangeFirstCanvas() -> Bool {
-        guard FirstArrangement.shouldArrange(remembered: remembered != nil) else { return false }
-        return layOutTidy(FirstArrangement.options(spacing: Tidy.Spacing.normal.points(gap: Settings.tileGap)))
+        guard FirstArrangement.shouldArrange(alreadyArranged: Settings.didAutoArrange) else { return false }
+        let arranged = layOutTidy(FirstArrangement.options(spacing: Tidy.Spacing.normal.points(gap: Settings.tileGap)))
+        if arranged { Settings.didAutoArrange = true }
+        return arranged
     }
 
     // MARK: Undo for placements

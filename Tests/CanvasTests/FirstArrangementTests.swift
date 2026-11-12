@@ -1,8 +1,9 @@
 import XCTest
 @testable import Canvas
 
-/// The first canvas with nothing remembered: windows grouped by app, each at its own size, never
-/// overlapping. A saved layout is left alone — the user's moves win after the first time.
+/// The one-time auto-arrange: windows grouped by app, each at its own size, never overlapping. It runs
+/// once on the first canvas after this feature shipped — a fresh one, or a saved layout from before that
+/// was never auto-arranged — then the user's moves win.
 final class FirstArrangementTests: XCTestCase {
     private let screen = CGRect(x: 0, y: 25, width: 1512, height: 920)
 
@@ -18,9 +19,13 @@ final class FirstArrangementTests: XCTestCase {
         XCTAssertEqual(o.spacing, 32)
     }
 
-    func testASavedLayoutIsRespectedNotRearranged() {
-        XCTAssertTrue(FirstArrangement.shouldArrange(remembered: false), "a fresh canvas arranges itself once")
-        XCTAssertFalse(FirstArrangement.shouldArrange(remembered: true), "after that the saved layout and the user's moves win")
+    func testACanvasNeverAutoArrangedArrangesOnce() {
+        // Fresh, or a saved layout from before this feature: neither has been auto-arranged, so both do once.
+        XCTAssertTrue(FirstArrangement.shouldArrange(alreadyArranged: false))
+    }
+
+    func testOnceAutoArrangedTheUsersMovesWin() {
+        XCTAssertFalse(FirstArrangement.shouldArrange(alreadyArranged: true), "after the one-time arrange the saved layout and the user's moves win")
     }
 
     func testOverlappingWindowsEndUpSeparatedAndGroupedByApp() {

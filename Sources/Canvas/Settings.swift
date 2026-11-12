@@ -309,6 +309,16 @@ enum Settings {
         set { defaults.set(newValue, forKey: rememberCanvasKey) }
     }
 
+    private static let didAutoArrangeKey = "CanvasDidAutoArrange"
+
+    /// The one-time auto-arrange has happened. The first canvas after this feature shipped groups its
+    /// windows by app once — a fresh canvas, or a saved layout from before that was never arranged — then
+    /// this is set and the user's moves win. Off until then, so an existing layout is tidied once too.
+    static var didAutoArrange: Bool {
+        get { defaults.bool(forKey: didAutoArrangeKey) }
+        set { defaults.set(newValue, forKey: didAutoArrangeKey) }
+    }
+
     private static let sunlightOnKey = "SunlightOn"
 
     /// The menu bar's Sunlight switch. Off, the canvas is away and the keys are the Mac's own, until

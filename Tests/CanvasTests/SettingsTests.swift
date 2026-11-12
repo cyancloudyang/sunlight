@@ -74,4 +74,17 @@ final class SettingsTests: XCTestCase {
             XCTAssertFalse(Settings.realDesktopOnShowDesktop)
         }
     }
+
+    func testDidAutoArrangeDefaultsOffAndRoundTrips() async {
+        await MainActor.run {
+            let defaults = UserDefaults.standard
+            let saved = defaults.object(forKey: "CanvasDidAutoArrange")
+            defer { defaults.set(saved, forKey: "CanvasDidAutoArrange") }
+            defaults.removeObject(forKey: "CanvasDidAutoArrange")
+            // Never arranged yet: the first canvas after this feature shipped arranges once, saved layout or not.
+            XCTAssertFalse(Settings.didAutoArrange)
+            Settings.didAutoArrange = true
+            XCTAssertTrue(Settings.didAutoArrange)
+        }
+    }
 }

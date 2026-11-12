@@ -245,13 +245,15 @@ enum Tidy {
     }
 }
 
-/// The first canvas, when nothing was remembered: the windows arrange themselves once so they read as a
-/// map instead of the pile they were on the desktop — grouped by app, each at its own size, never
-/// overlapping (`Tidy`). After that the saved layout wins, so the user's own moves are respected. Pure
-/// policy: the controller gathers the windows and applies the result.
+/// The one-time auto-arrange: on the first canvas after this feature shipped — fresh, or a saved layout
+/// from before that was never arranged — the windows arrange themselves once so they read as a map instead
+/// of the pile they were on the desktop: grouped by app, each at its own size, never overlapping (`Tidy`).
+/// After that the saved layout wins, so the user's own moves are respected. Pure policy: the controller
+/// gathers the windows and applies the result.
 enum FirstArrangement {
-    /// Arrange only when there's no saved layout to put back. A remembered canvas is left as it was.
-    static func shouldArrange(remembered: Bool) -> Bool { !remembered }
+    /// Arrange once, on the first canvas after this feature shipped: a fresh canvas, or a saved layout
+    /// from before that was never auto-arranged. Once done (`alreadyArranged`), the user's moves win.
+    static func shouldArrange(alreadyArranged: Bool) -> Bool { !alreadyArranged }
 
     /// By app, sizes kept, auto columns, the spacing the caller passes (normal tile gaps).
     static func options(spacing: CGFloat) -> Tidy.Options {
