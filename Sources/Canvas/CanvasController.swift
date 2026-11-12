@@ -2475,7 +2475,7 @@ final class CanvasController {
                 didInitialFit = true
                 if placed, let camera = remembered?.camera(for: display.uuid, lead: isLead, viewSize: view.bounds.size) {
                     view.animateCamera(to: camera)
-                } else { view.fitAll(animated: true) }
+                } else if !autoArrangeFirstCanvas() { view.fitAll(animated: true) }
                 onFirstSync?()
             } else if pendingFitAll, !proxies.isEmpty {
                 pendingFitAll = false
@@ -2644,7 +2644,7 @@ final class CanvasController {
             if placed, let camera = remembered?.camera(for: display.uuid, lead: isLead, viewSize: view.bounds.size) {
                 // The canvas as it was last run, seen as it was.
                 view.animateCamera(to: camera)
-            } else {
+            } else if !autoArrangeFirstCanvas() {
                 // First sync: the canvas is the desktop at 1:1. Pull back a little so it reads as a canvas.
                 view.fitAll(animated: true)
             }
@@ -4527,8 +4527,15 @@ final class CanvasController {
             show()
             return
         }
+        layOutTidy(Settings.tidyOptions)
+    }
+
+    /// The grid itself: one item per window or bonded group, laid out by `Tidy`, the real windows moved
+    /// (resized only in same-size mode), the camera framing the result in the same motion, the layout
+    /// remembered. Shared by Tidy and the first canvas's auto-arrange. False when there's nothing to place.
+    @discardableResult
+    private func layOutTidy(_ options: Tidy.Options) -> Bool {
         let screen = placementScreen()
-        let options = Settings.tidyOptions
         // One item per window, or per bonded group, keyed by the member met first (the canvas is bottom
         // to top, then the hidden and minimized).
         var items: [Tidy.Item] = []
@@ -4543,7 +4550,7 @@ final class CanvasController {
                                    away: members.allSatisfy { $0.away != nil }, isGroup: members.count > 1))
             blocks.append(members)
         }
-        guard !items.isEmpty else { return }
+        guard !items.isEmpty else { return false }
         let placed = Tidy.layout(items, options: options, screen: screen)
         let how = options.sizing == .keep ? "sizes kept" : "same size"
         Log.note("Tidy: \(items.count) windows and groups, \(how), by \(options.order.title)")
@@ -4583,6 +4590,15 @@ final class CanvasController {
         minimap.redraw()
         scheduleCapturePass()
         rememberSoon()
+        return true
+    }
+
+    /// The first canvas with nothing remembered: group the windows by app, each at its own size, never
+    /// overlapping (`FirstArrangement`, `Tidy`), and frame the result. False when there's a saved layout to
+    /// respect or nothing to arrange, so the caller falls back to fitting everything in view.
+    private func autoArrangeFirstCanvas() -> Bool {
+        guard FirstArrangement.shouldArrange(remembered: remembered != nil) else { return false }
+        return layOutTidy(FirstArrangement.options(spacing: Tidy.Spacing.normal.points(gap: Settings.tileGap)))
     }
 
     // MARK: Undo for placements
