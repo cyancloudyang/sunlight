@@ -254,7 +254,8 @@ enum Settings {
 
     /// The four-finger gesture that shows everything (and, done again on the canvas, goes back into
     /// the last window), as the Mission Control key does. A tap leaves every four-finger drag a pan; a
-    /// swipe up, Mission Control's own gesture, takes the quick upward stroke from panning.
+    /// swipe up, Mission Control's own gesture, takes the quick upward stroke from panning. Swipe up is
+    /// the default, so an upward stroke enters the overview out of the box.
     enum SeeAllGesture: String, CaseIterable, Identifiable {
         case tap, swipeUp
         var id: Self { self }
@@ -263,7 +264,7 @@ enum Settings {
     }
     static let seeAllGestureDidChange = Notification.Name("SunlightSeeAllGestureDidChange")
     static var seeAllGesture: SeeAllGesture {
-        get { SeeAllGesture(rawValue: defaults.string(forKey: seeAllGestureKey) ?? "") ?? .tap }
+        get { SeeAllGesture(rawValue: defaults.string(forKey: seeAllGestureKey) ?? "") ?? .swipeUp }
         set {
             defaults.set(newValue.rawValue, forKey: seeAllGestureKey)
             NotificationCenter.default.post(name: seeAllGestureDidChange, object: nil)

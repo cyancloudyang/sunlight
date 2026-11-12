@@ -87,4 +87,19 @@ final class SettingsTests: XCTestCase {
             XCTAssertTrue(Settings.didAutoArrange)
         }
     }
+
+    func testSeeAllGestureDefaultsToSwipeUpAndRoundTrips() async {
+        await MainActor.run {
+            let defaults = UserDefaults.standard
+            let saved = defaults.object(forKey: "CanvasSeeAllGesture")
+            defer { defaults.set(saved, forKey: "CanvasSeeAllGesture") }
+            defaults.removeObject(forKey: "CanvasSeeAllGesture")
+            // Out of the box an upward four-finger swipe is See All; the other drags stay pans.
+            XCTAssertEqual(Settings.seeAllGesture, .swipeUp)
+            Settings.seeAllGesture = .tap
+            XCTAssertEqual(Settings.seeAllGesture, .tap)
+            Settings.seeAllGesture = .swipeUp
+            XCTAssertEqual(Settings.seeAllGesture, .swipeUp)
+        }
+    }
 }
