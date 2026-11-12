@@ -63,6 +63,18 @@ final class HandoffTests: XCTestCase {
         XCTAssertNotNil(p.inPlace, "a tiled window keeps its place in its area")
     }
 
+    // MARK: The card-click policy
+
+    func testACardClickEntersInPlaceRatherThanFillingTheScreen() {
+        // A click on a map card keeps the window's own size and place — the clicked spot stays under the
+        // pointer — rather than the fill-screen entry, which resizes the app to the visible frame.
+        let placement = Handoff.cardClick(at: CGPoint(x: 1000, y: 700), offset: CGPoint(x: 100, y: 50))
+        let p = plan(placement)
+        XCTAssertNotNil(p.inPlace, "a card click keeps the window's place; it does not fill the screen")
+        XCTAssertTrue(p.clicked)
+        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 650))
+    }
+
     // MARK: Filling the screen
 
     func testFillScreenPlanUsesVisibleFrame() {

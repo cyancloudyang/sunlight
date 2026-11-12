@@ -418,9 +418,9 @@ final class CanvasController {
         view.onSpring = { [weak self] proxy, point in self?.springInto(proxy, around: point) }
         view.onFileDragEnded = { [weak self] in self?.fileDragEnded() }
         view.onEnter = { [weak self] proxy, point in self?.handoff(to: proxy, placement: .inPlace(around: point)) }
-        view.onClickEnter = { [weak self] proxy, _, _ in
+        view.onClickEnter = { [weak self] proxy, at, offset in
             self?.preClickCamera = self?.view.camera
-            self?.handoff(to: proxy, placement: .fillScreen)   // a click is a command: this window, full screen
+            self?.handoff(to: proxy, placement: Handoff.cardClick(at: at, offset: offset))   // a click enters at 1:1 where it is, keeping its size
         }
         view.onClickFocus = { [weak self] proxy in self?.focusFromFlight(proxy) }
         view.onUse = { [weak self] proxy, point, press in self?.use(proxy, around: point, press: press) }

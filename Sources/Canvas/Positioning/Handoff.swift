@@ -34,6 +34,13 @@ enum Handoff {
         case fillScreen
     }
 
+    /// A click on a map card enters the window at 1:1 around the clicked spot, keeping its own size and
+    /// place — not filling the screen. `point` is the click in view coordinates; `offset` the clicked
+    /// spot inside the window, in world units (the window's points).
+    static func cardClick(at point: CGPoint, offset: CGPoint) -> Placement {
+        .clicked(at: point, offset: offset)
+    }
+
     /// Where the window goes and how the camera gets there. All in view coordinates (the display's
     /// top-left at zero), points.
     struct Plan: Equatable {
