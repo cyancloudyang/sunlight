@@ -2,7 +2,7 @@
 
 - 日期：2026-11-12
 - 适用：Sunlight fork（Tablecloth），分支 `tablecloth`，只 push origin（cyancloudyang/sunlight）
-- 状态：待批准（方案甲已认可：先 A 后 B；建造者审查 7 问已落定，见 §7.3，无遗留「只有用户能答」项）
+- 状态：已批准（用户 2026-11-12「同意，开始吧」；方案甲：先 A 后 B；建造者审查 7 问已落定见 §7.3，无遗留「只有用户能答」项）→ 下一步 writing-plans 出 A 部分实现计划，TDD 实施
 - 关联：原设计 `docs/superpowers/specs/2026-11-10-tablecloth-design.md`；进度 `docs/superpowers/2026-11-11-tablecloth-ledger.md`；任务 #27
 
 ## 1. 意图与为什么

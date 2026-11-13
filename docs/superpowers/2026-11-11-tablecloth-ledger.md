@@ -226,3 +226,19 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - 全套 `swift test`：721 tests、1 skipped、0 failures（skip 仍为 DockItemTests 无 bundle 用例）。生产 Canvas 模块 Swift 5、测试 target Swift 6 严格模式；编译警告均为既有基线，本轮未新增。
 - 仍未验收（需用户真机）：#26 上滑默认即 See All（旧 build 切设置即可即时验证；新默认需重建重 launch+重授权）；#25 迁移真机效果；#23 慢速上滑手感、#24 单击滑入观感；及第五/六轮遗留真机项。一律不虚构数字、不宣称达标。
 - #20 真机测量仍暂停。Deferred minors 沿用第五/六轮。
+
+## 空间相机设计批准（2026-11-12，#27，关键交接节点）
+
+用户批准设计文档（「同意，开始吧。关键节点要确保其他的 agent 可以接手。」）。方案甲：先 A（跟手入场 + 入图逐卡飞行）后 B（指针意图 dwell-to-zoom 导航），A 真机验收后再细化 B。
+
+- 设计文档（权威）：`docs/superpowers/specs/2026-11-12-spatial-camera-design.md`，提交 6efcf5a + 状态更新。§7.3 为建造者审查 7 问落定表，**无遗留「只有用户能答」项**。接手 agent 读该文档即可 plan，不必回问用户。
+- 地基性事实已亲自读码核实（非推测）：`mapDidHide`(CanvasController:8367) 不清 proxies（隐藏期整套保留）；`snapshot(at:)`(:5665) 同步取 fresh WindowList+相机(~1ms)；`FrameSnapshot.worldOrigin`=camera.toWorld(frame.origin)；`enter()`(:5877) enteredCamera=view.camera（tile/PiP zoom≠1 caveat :5878）；`placeNewWindows`(:3688) 直接 place 无飞行（分裂感来源）；`flightRect`(Handoff:124) clamp[0,1]；`fly`(CanvasView:1303) 可重定向保留速度；`interruptMotion`(:1357)。
+- Ruling（Q2 起始相机）：入图从 view.camera（=enteredCamera，聚焦窗 1:1）起步，不强制 home — 强制 home 会先跳再拉远，正是「无分裂感」反面 — 代价：tile/PiP 入图 zoom≠1 时飞行起点有缩放差，必要时该情形退化为 fly（真机确认）。
+- Ruling（Q3 A2 作用域）：逐卡飞行只用于「从真实堆叠桌面入图」（上滑/热键/菜单，canvas 隐藏且真实桌面在）；F3 单窗返回(flightBack)保留既有相机飞行，本轮不扩逐卡飞 — 依据用户措辞「从当前屏幕的堆叠状态」隐含多窗堆叠 — 代价：若用户期望 F3 返回也逐卡飞，本轮未做，可后续扩（已明示用户）。
+- Ruling（Q4 幂等）：已在俯瞰(view.camera isClose overviewCamera)再上滑=幂等 re-fit，不重复飞卡；进度驱动仅用于从真实桌面入图 — 沿用 #23/#26 上滑=See All — 代价：幂等阈值太松则微上滑触发无谓 re-fit，真机调。
+- Ruling（Q5 取消/打断）：取消（释放未过 commit）相机+卡片同一 t 反向飞回真实起点（整段可逆）；打断（飞行中其它输入）interruptMotion 落到目标、新输入接管 — 用户「可取消」意图+既有 interruptMotion 语义 — 代价：取消时卡片与相机须同一 t 反向否则脱节。
+- Ruling（Q6 过冲）：卡片 clamp[0,1] 不过冲（沿用 flightRect），相机 Spring(0.45/0.72) ~4% 过冲；释放动量经 fly 传入弹簧 — 既有 handoff 同款 — 代价：落位瞬间卡片先停相机后停，可接受。
+- Ruling（Q7 PiP/widget/attached）：PiP drawnPip 忽略相机→不飞保持屏幕角；attached 随父飞；widget 无真实堆叠位→存储位淡入(setArrival) — 沿用既有模型 — 代价：PiP 入图仍占屏幕角可能与俯瞰构图重叠，真机确认。
+- 下一步：invoke writing-plans 出 A 部分实现计划（docs/superpowers/plans/），TDD 逐项 RED→GREEN→全套件；每关键节点 commit+push origin（cyancloudyang/sunlight）tablecloth，绝不 push upstream。PR #1 保持 draft 直到用户验收。
+- 硬约束沿用（逐条生效）：不关 SIP/不注入系统进程/低占用/零常驻流/私有 API 仅可选有公开兜底（MultitouchSupport 既有）/不改系统偏好不做登录项/许可证边界/只 push origin。
+- 仍未验收（真机）：#26/#25/#23/#24 及第五/六轮遗留；空间相机 A/B 待实施后真机验收。一律不虚构数字、不宣称达标。#20 真机测量仍暂停。
