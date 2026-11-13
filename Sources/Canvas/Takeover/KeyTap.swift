@@ -45,6 +45,9 @@ final class KeyTap: @unchecked Sendable {
         var placesNewWindow = false
         /// A full-screen app's Space is in front: ⌃← goes back to the canvas's Desktop, as on the Mac.
         var inFullScreenSpace = false
+        /// The codes that summon the canvas: the Mac's Mission Control key and F3, plus a backup when one is
+        /// set (`Settings.summonBackupKey`). Read on the tap thread through the lock.
+        var summonKeys: Set<Int64> = KeyTap.defaultSummonKeys
         /// When the Mission Control key went down (the event's timestamp, ns), until it's let go.
         var missionControlDownAt: UInt64?
         /// Key codes whose keyDown we swallowed; their keyUp is swallowed too so apps never see an orphan.
@@ -70,7 +73,19 @@ final class KeyTap: @unchecked Sendable {
     private static let downArrow: Int64 = 125
     private static let upArrow: Int64 = 126
     /// The dedicated Mission Control key on Apple keyboards.
-    private static let missionControlKey: Int64 = 160
+    static let missionControlKey: Int64 = 160
+    /// F3, which macOS maps to Mission Control on Apple keyboards (and which keyboards without the
+    /// dedicated key send).
+    static let f3Key: Int64 = 99
+
+    /// The keys that summon the canvas with no modifier: the Mac's own key and F3; a backup when one is set.
+    static func summonKeys(backup: Int64?) -> Set<Int64> {
+        var keys: Set<Int64> = [missionControlKey, f3Key]
+        if let backup, backup != missionControlKey, backup != f3Key { keys.insert(backup) }
+        return keys
+    }
+
+    static let defaultSummonKeys = summonKeys(backup: nil)
 
     private let handler: @MainActor @Sendable (Command) -> Void
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -104,10 +119,13 @@ final class KeyTap: @unchecked Sendable {
         layoutData.withLock { $0 = data }
     }
 
-    func start() {
+    /// `summonKeys`: the codes that summon the canvas (the Mac's two, plus a backup the caller read from
+    /// `Settings.summonBackupKey` on the main actor).
+    func start(summonKeys keys: Set<Int64> = KeyTap.defaultSummonKeys) {
         state.withLock {
             $0 = State()
             $0.enabled = true
+            $0.summonKeys = keys
         }
         if let runLoop {
             // The tap is there; have it listen again (the thread re-enables it on its own as well).
@@ -210,6 +228,11 @@ final class KeyTap: @unchecked Sendable {
             if let port, isEnabled { CGEvent.tapEnable(tap: port, enable: true) }
             return Unmanaged.passUnretained(event)
         }
+        // A key the canvas posted itself goes straight on to the system: the Show Desktop shortcut it
+        // posts (`postSystemShowDesktop`) must not be caught here and re-triggered, which would loop.
+        if KeyTap.passesOn(userData: event.getIntegerValueField(.eventSourceUserData)) {
+            return Unmanaged.passUnretained(event)
+        }
         // Stopped: nothing is the canvas's (a key that came through before the tap stopped listening).
         guard isEnabled else { return Unmanaged.passUnretained(event) }
 
@@ -219,14 +242,11 @@ final class KeyTap: @unchecked Sendable {
         let action: Action
         switch type {
         case .keyDown:
-            let command = flags.contains(.maskCommand)
-            let character = command ? KeyTap.character(of: event) : nil
-            let symbol = command ? symbol(of: event) : nil
             let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
             let timestamp = event.timestamp
             action = state.withLock { s -> Action in
-                let a = KeyTap.action(keyCode: keyCode, flags: flags, state: &s, character: character, symbol: symbol,
-                                      autorepeat: autorepeat, timestamp: timestamp)
+                let a = KeyTap.summonAction(keyCode: keyCode, flags: flags, state: &s,
+                                            autorepeat: autorepeat, timestamp: timestamp)
                 if case .pass = a {} else { s.swallowed.insert(keyCode) }
                 return a
             }
@@ -287,6 +307,12 @@ final class KeyTap: @unchecked Sendable {
         return String(utf16CodeUnits: chars, count: length)
     }
 
+    /// A key the canvas posted itself, marked so (`CanvasView.passedOnMark`), is never its own to
+    /// intercept: it goes straight on to the system. The Show Desktop shortcut the canvas posts is one.
+    static func passesOn(userData: Int64) -> Bool {
+        userData == CanvasView.passedOnMark
+    }
+
     /// `character`: what the key types (`character(of:)`), where known; the N key's code stands in for it.
     /// `symbol`: what it types with ⌘ taken off (`symbol(of:)`), for ⌘? on any layout.
     /// `autorepeat`: the key is held and this is the system repeating it. `timestamp`: the event's, in ns.
@@ -340,7 +366,7 @@ final class KeyTap: @unchecked Sendable {
         case leftArrow, rightArrow, upArrow, downArrow:
             // Spaces switching and Mission Control's ⌃↑ ⌃↓: one Desktop per display, the canvas's.
             return (control && !command && !option) ? .swallow : .pass
-        case missionControlKey where !command && !control && !option:
+        case let key where state.summonKeys.contains(key) && !command && !control && !option:
             // Held, the key repeats: it's still the one press (held to pick a window), not a toggle each time.
             if autorepeat || state.missionControlDownAt != nil { return .swallow }
             state.missionControlDownAt = timestamp
@@ -352,10 +378,20 @@ final class KeyTap: @unchecked Sendable {
         }
     }
 
+    static func summonAction(keyCode: Int64, flags: CGEventFlags, state: inout State,
+                             autorepeat: Bool = false, timestamp: UInt64 = 0,
+                             summonKeys: Set<Int64> = KeyTap.defaultSummonKeys) -> Action {
+        guard summonKeys.contains(keyCode),
+              flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty else { return .pass }
+        if autorepeat || state.missionControlDownAt != nil { return .swallow }
+        state.missionControlDownAt = timestamp
+        return .send(.missionControl)
+    }
+
     /// A key let go: its keyUp is swallowed if its keyDown was. The Mission Control key's says how long it was held.
     static func release(keyCode: Int64, state: inout State, timestamp: UInt64) -> Action {
         let wasSwallowed = state.swallowed.remove(keyCode) != nil
-        if keyCode == missionControlKey, let down = state.missionControlDownAt {
+        if state.summonKeys.contains(keyCode), let down = state.missionControlDownAt {
             state.missionControlDownAt = nil
             let held = timestamp >= down ? TimeInterval(timestamp - down) / 1_000_000_000 : 0
             return .send(.missionControlUp(held: held))

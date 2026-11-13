@@ -5,9 +5,9 @@ import os
 /// drag would move them), and from inside an entered window, which brings the canvas back first. No
 /// modifier, no key first, and every direction pans, up included. A four-finger *tap* (four fingers
 /// down and up again without moving) shows everything, as Mission Control's swipe does; or, by
-/// Settings › How to use, a quick four-finger *flick* up does, Mission Control's own stroke, told from a
-/// drag up by its speed as the Mac tells them apart (swiped up slowly, Mission Control follows the
-/// fingers instead of opening). Thumb and three fingers spreading apart is Show Desktop, as on the Mac.
+/// Settings › How to use, a four-finger *swipe up* does — any upward stroke, however slow, told from a
+/// pan by its direction (horizontal and diagonal drags still pan; up opens the whole canvas). Thumb and
+/// three fingers spreading apart is Show Desktop, as on the Mac.
 ///
 /// The touches come straight from the trackpad through MultitouchSupport, the private framework Mac
 /// gesture tools read (MiddleClick, BetterTouchTool). There's no public route: AppKit only hands touches
@@ -24,9 +24,14 @@ final class TrackpadPan: @unchecked Sendable {
         /// Finger travel since the last update, in trackpad widths, y down. The content follows it.
         case changed(CGVector)
         case ended
-        /// A four-finger tap, as the fingers lift; or a flick up, mid-drag, after which the pan is over
-        /// with no `ended` to follow.
+        /// A four-finger tap, as the fingers lift: See All, in tap mode only.
         case seeAll
+        /// Swipe-up entry recognized: the canvas comes up and the pull-back follows the finger.
+        case entryBegan
+        /// Swipe-up entry progress t∈[0,1], each frame after entryBegan until the fingers lift.
+        case entryProgress(CGFloat)
+        /// The entry swipe's fingers lifted; the controller commits or cancels from the last progress.
+        case entryEnded
         /// The four fingers spread apart (Show Desktop), once per touch. No pan comes with it.
         case spread
     }
@@ -39,15 +44,16 @@ final class TrackpadPan: @unchecked Sendable {
     /// down (a window's top under the menu bar can't be entered where it is). One within this angle of
     /// vertical stays plumb the same way.
     fileprivate static let axisLock: CGFloat = 22.5 * .pi / 180
-    /// A tap's or flick's four fingers land together: the fourth within this long of the first. A
+    /// A tap's or swipe's four fingers land together: the fourth within this long of the first. A
     /// finger that joins a three-finger tap (Look Up) or swipe (back, forward) later never makes one.
     fileprivate static let tapLanding: CFAbsoluteTime = 0.15
-    /// Centroid rise, in trackpad widths, that makes an upward drag a flick. About two centimetres on
+    /// Centroid rise, in trackpad widths, that makes an upward drag a swipe up. About two centimetres on
     /// a built-in trackpad: a short stroke, not a shifting hand.
     fileprivate static let swipeDistance: CGFloat = 0.12
-    /// A flick covers `swipeDistance` within this long of the drag beginning. Slower than that, the
-    /// fingers are panning, and speeding up later never makes a flick of it.
-    fileprivate static let flickWindow: CFAbsoluteTime = 0.35
+    /// Further centroid rise, in trackpad widths, that takes the entry from just begun (t=0) to all the
+    /// way in (t=1). About four centimetres on a built-in trackpad: the pull-back follows the hand over a
+    /// stroke a hand actually makes. Tunable on the real device.
+    fileprivate static let entryDistance: CGFloat = 0.30
     /// A tap is over, the first finger lifting, within this long of the first one landing. A hand
     /// that rests on the trackpad longer is resting.
     fileprivate static let tapDuration: CFAbsoluteTime = 0.3
@@ -278,17 +284,18 @@ struct TrackpadRecognizer {
     /// The drag is held level (dy = 0) or plumb (dx = 0), decided as it begins; nil for a free
     /// (diagonal) drag.
     var lock: Lock?
-    /// Settings › How to use: a quick flick up is See All, instead of a tap.
+    /// Settings › How to use: an upward swipe is See All, instead of a tap.
     var swipeUpSeesAll = false
     /// Sunlight is on: the four fingers are the canvas's, and the system's own swipes are held off.
     var active = true
     /// The fingers moved or spread while no drag was under way: not a tap any more.
     var stirred = false
-    /// Where the centroid was and when, as the drag began; a flick is measured from there.
+    /// Where the centroid was as the drag began; an upward swipe is measured from there.
     var dragOrigin: CGPoint?
-    var dragBegan: CFAbsoluteTime = 0
     /// The spread has fired; the rest of the touch does nothing.
     var swiped = false
+    /// A swipe up has opened the canvas's entry: progress is under way until the fingers lift.
+    var entryActive = false
 
     enum Lock { case level, plumb }
     /// When the first finger of this touch landed; nil with no finger down.
@@ -343,7 +350,6 @@ struct TrackpadRecognizer {
             guard hypot(travel.dx, travel.dy) >= TrackpadPan.slop else { return [] }
             anchor = nil
             dragOrigin = from
-            dragBegan = now
             let angle = atan2(abs(travel.dy), abs(travel.dx))
             if angle <= TrackpadPan.axisLock {
                 lock = .level
@@ -354,15 +360,23 @@ struct TrackpadRecognizer {
             }
             phases.append(.began)
         }
-        if swipeUpSeesAll, let origin = dragOrigin, landedTogether, now - dragBegan <= TrackpadPan.flickWindow {
-            // Still early enough to be a flick: the whole travel so far, straight up and far enough,
-            // makes one. The pan it interrupts has moved the canvas a little; See All goes on from there.
+        if swipeUpSeesAll, let origin = dragOrigin, landedTogether {
+            // Any upward swipe opens the canvas, however slow: the whole travel so far, straight up and
+            // far enough, begins the entry. Progress is measured from the recognition threshold, so the
+            // canvas starts at the camera it was on (no jump) and the rest of the stroke drives the
+            // pull-back; the finger coming back down scrubs it out again. The pan it interrupts has moved
+            // the canvas a little; entry goes on from there.
             let rise = centroid.y - origin.y   // the centroid's y goes up the trackpad
             let run = abs(centroid.x - origin.x)
-            if rise >= TrackpadPan.swipeDistance, atan2(rise, run) >= .pi / 2 - TrackpadPan.axisLock {
-                swiped = true
-                last = nil   // the pan is over here; lifting the fingers won't `end` it again
-                return phases + [.seeAll]
+            let recognized = rise >= TrackpadPan.swipeDistance
+                && atan2(rise, run) >= .pi / 2 - TrackpadPan.axisLock
+            if recognized || entryActive {
+                let span = TrackpadPan.entryDistance - TrackpadPan.swipeDistance
+                let t = min(max((rise - TrackpadPan.swipeDistance) / span, 0), 1)
+                let first = !entryActive
+                entryActive = true
+                last = centroid   // the pan is over here; lifting the fingers won't `end` it again
+                return phases + (first ? [.entryBegan, .entryProgress(t)] : [.entryProgress(t)])
             }
         }
         switch lock {
@@ -376,7 +390,8 @@ struct TrackpadRecognizer {
     }
 
     mutating func reset() -> [TrackpadPan.Phase] {
-        let phases: [TrackpadPan.Phase] = last == nil ? [] : [.ended]
+        // An entry's fingers lifting ends the entry, not a pan (entryActive implies last != nil).
+        let phases: [TrackpadPan.Phase] = entryActive ? [.entryEnded] : (last == nil ? [] : [.ended])
         device = nil
         fingers = []
         anchor = nil
@@ -385,6 +400,7 @@ struct TrackpadRecognizer {
         stirred = false
         dragOrigin = nil
         swiped = false
+        entryActive = false
         landedTogether = false
         anchorSpread = 0
         return phases

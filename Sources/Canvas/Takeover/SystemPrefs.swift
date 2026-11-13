@@ -1,14 +1,13 @@
 import AppKit
 
-/// Takeover's footprint on the Mac: a handful of Dock, Finder and widget preferences, written through
-/// CFPreferences (what `defaults write` does) and picked up by restarting their owner. The originals
-/// are snapshotted before the first write; an absent key is remembered as absent and deleted again on
-/// revert, so the user's own settings come back exactly as they were.
+/// What an earlier Sunlight changed on the Mac: a handful of Dock, Finder and widget preferences, and the
+/// snapshot it took before writing them. Read only now — Tablecloth changes no preference — kept so the
+/// uninstall can tell what a snapshot still owes back (#1 in the handoff).
 enum SystemPrefs {
     struct Pref {
         let domain: String
         let key: String
-        /// nil deletes the key while takeover is on, so the system default applies.
+        /// nil is what an earlier takeover deleted, so the system default applied.
         let desired: Any?
         var id: String { "\(domain)|\(key)" }
     }
@@ -62,13 +61,6 @@ enum SystemPrefs {
         return s
     }
 
-    /// Writes every managed pref that differs from its takeover value. Returns the domains that changed;
-    /// their owners need a restart to pick the values up.
-    @discardableResult
-    static func apply() -> Set<String> {
-        write(managed.map { ($0, $0.desired) })
-    }
-
     /// The retired prefs a snapshot still holds, each with the user's own value to put back (nil: the key
     /// was absent), and the snapshot without them.
     static func retiredInSnapshot(_ snapshot: [String: Any]) -> (restore: [(Pref, Any?)], remaining: [String: Any]) {
@@ -79,56 +71,6 @@ enum SystemPrefs {
             restore.append((p, (saved as? String) == absent ? nil : saved))
         }
         return (restore, remaining)
-    }
-
-    /// Writes the user's own values back for retired prefs. Returns the domains that changed.
-    @discardableResult
-    static func restore(_ targets: [(Pref, Any?)]) -> Set<String> {
-        write(targets)
-    }
-
-    /// Puts back what `snapshot()` recorded, retired prefs included. Keys that were absent are deleted,
-    /// not defaulted.
-    @discardableResult
-    static func revert(snapshot: [String: Any]) -> Set<String> {
-        write((managed + retired).compactMap { p in
-            guard let saved = snapshot[p.id] else { return nil }
-            return (p, (saved as? String) == absent ? nil : saved)
-        })
-    }
-
-    private static func write(_ targets: [(Pref, Any?)]) -> Set<String> {
-        var changed = Set<String>()
-        for (p, target) in targets where !equal(current(p), target) {
-            CFPreferencesSetAppValue(p.key as CFString, target.map { $0 as AnyObject }, p.domain as CFString)
-            changed.insert(p.domain)
-        }
-        for d in changed { CFPreferencesAppSynchronize(d as CFString) }
-        return changed
-    }
-
-    private static func equal(_ a: Any?, _ b: Any?) -> Bool {
-        switch (a, b) {
-        case (nil, nil): return true
-        case let (a?, b?): return (a as AnyObject).isEqual(b)
-        default: return false
-        }
-    }
-
-    /// Same as `killall`: launchd brings the Dock and Finder straight back with the new values. The
-    /// widget setting needs no restart. Returns the apps restarted.
-    @discardableResult
-    static func restart(domains: Set<String>) -> [String] {
-        var restarted: [String] = []
-        if domains.contains(dock) { restart(bundleID: "com.apple.dock"); restarted.append("Dock") }
-        if domains.contains(finder) { restart(bundleID: "com.apple.finder"); restarted.append("Finder") }
-        return restarted
-    }
-
-    private static func restart(bundleID: String) {
-        for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) {
-            kill(app.processIdentifier, SIGTERM)
-        }
     }
 
     static func describeCurrent() -> String {

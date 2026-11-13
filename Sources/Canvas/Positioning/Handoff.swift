@@ -1,5 +1,12 @@
 import CoreGraphics
 
+/// How a handoff ended when the flight finished.
+enum HandoffOutcome: Equatable {
+    case completed
+    /// The window closed or minimized during the flight: nothing to enter.
+    case abortedWindowGone
+}
+
 /// The geometry of entering a window, and of a window's native place in general, as pure functions.
 ///
 /// One invariant holds the canvas and the desktop together: at 1:1 every window sits natively where
@@ -22,6 +29,16 @@ enum Handoff {
         /// A click on the proxy at `offset` inside it (world units, which are the real window's points):
         /// it grows to 1:1 around the clicked spot, which stays under the pointer as far as the screen allows.
         case clicked(at: CGPoint, offset: CGPoint)
+        /// The tablecloth way in: the window fills the visible frame, and the camera swoops to its
+        /// centre at 1:1. Tiling is ignored — the command is "this window, full screen".
+        case fillScreen
+    }
+
+    /// A click on a map card enters the window at 1:1 around the clicked spot, keeping its own size and
+    /// place — not filling the screen. `point` is the click in view coordinates; `offset` the clicked
+    /// spot inside the window, in world units (the window's points).
+    static func cardClick(at point: CGPoint, offset: CGPoint) -> Placement {
+        .clicked(at: point, offset: offset)
     }
 
     /// Where the window goes and how the camera gets there. All in view coordinates (the display's
@@ -54,6 +71,13 @@ enum Handoff {
         var keepsPlace = false
         var clicked = false
         switch placement {
+        case .fillScreen:
+            // Before the tiled-area override: filling the screen ignores tiling. The camera puts the
+            // window's centre at the visible area's centre at 1:1; the seam then grows the real window
+            // to the visible frame and re-aligns the camera over it.
+            let fillOrigin = pixelAligned(visible.origin, scale: scale)
+            let fillCamera = Camera(origin: CGPoint(x: rect.midX - visible.width / 2, y: rect.midY - visible.height / 2), zoom: 1)
+            return Plan(origin: fillOrigin, camera: fillCamera, inPlace: nil, inPlaceOrigin: fillOrigin, clicked: false)
         case .centered:
             origin = centredOrigin(of: rect, in: visible)
         case .inPlace(let point):
@@ -69,6 +93,10 @@ enum Handoff {
         if let area = tiledArea {
             origin = CGPoint(x: visible.minX + rect.minX - area.minX, y: visible.minY + rect.minY - area.minY)
             keepsPlace = true
+        } else if clicked {
+            // A click on a partly off-screen window slides it the least it takes to be wholly on show;
+            // one already in view stays exactly where the clicked spot put it.
+            origin = slidIntoView(origin, size: rect.size, visible: visible)
         }
         origin = pixelAligned(origin, scale: scale)
         let inPlace = keepsPlace ? Camera(origin: CGPoint(x: rect.minX - origin.x, y: rect.minY - origin.y), zoom: 1) : nil
@@ -79,6 +107,26 @@ enum Handoff {
         return Plan(origin: origin, camera: target, inPlace: inPlace, inPlaceOrigin: inPlaceOrigin, clicked: clicked)
     }
 
+    /// Whether a handoff may finish when its flight lands: a window that closed or minimized on the
+    /// way aborts it, and the canvas comes back to the map instead of entering a ghost.
+    static func outcome(windowAlive: Bool) -> HandoffOutcome {
+        windowAlive ? .completed : .abortedWindowGone
+    }
+
+    /// The frame the seam aligns to: what the window actually took, never what was asked. An app that
+    /// clamps a resize lands where it lands, and the canvas accepts it — no retry, no fight.
+    static func seamRect(actualFrame: CGRect, requested: CGRect) -> CGRect {
+        actualFrame
+    }
+
+    /// The proxy's rect partway through a focus flight, from its map rect to the screen-filling one
+    /// (or back). Clamped at the ends: the flight's spring overshoots, the rect must not breathe past.
+    static func flightRect(from: CGRect, to: CGRect, at t: CGFloat) -> CGRect {
+        let s = min(max(t, 0), 1)
+        return CGRect(x: from.minX + (to.minX - from.minX) * s, y: from.minY + (to.minY - from.minY) * s,
+                      width: from.width + (to.width - from.width) * s, height: from.height + (to.height - from.height) * s)
+    }
+
     /// Where a window entered in the middle sits on screen: centred in the visible area, or at its
     /// top-left when it's bigger than that.
     static func centredOrigin(of rect: CGRect, in visible: CGRect) -> CGPoint {
@@ -86,6 +134,18 @@ enum Handoff {
         if rect.width > visible.width { origin.x = visible.minX }
         if rect.height > visible.height { origin.y = visible.minY }
         return origin
+    }
+
+    /// Slide a clicked window the least it takes to be wholly on screen: each overhanging edge is pushed
+    /// just inside, a window already in view doesn't move. A window bigger than the screen can't be made
+    /// whole, so it aligns to the leading edges, as a centred one does. The top of a window that fits is
+    /// left alone here — the menu-bar clamp takes it later, so the plan still remembers where the click
+    /// asked (`inPlaceOrigin`).
+    static func slidIntoView(_ origin: CGPoint, size: CGSize, visible: CGRect) -> CGPoint {
+        var o = origin
+        o.x = size.width <= visible.width ? min(max(o.x, visible.minX), visible.maxX - size.width) : visible.minX
+        o.y = size.height <= visible.height ? min(o.y, visible.maxY - size.height) : visible.minY
+        return o
     }
 
     /// Where a window sits natively when the canvas is at `camera`: its canvas place through the

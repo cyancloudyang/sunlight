@@ -10,8 +10,9 @@ import UniformTypeIdentifiers
 /// to run on `queue`; `BackgroundRenderer` sequences them and drops results that arrive too late.
 final class BackgroundPipeline: @unchecked Sendable {
     /// The blur levels, as Gaussian sigmas in display pixels. Level 0 is the picture itself; the picture
-    /// shown is a cross-fade between the two levels around `BackgroundSpec.blurPosition`.
-    nonisolated static let levelRadii: [CGFloat] = [0, 4, 12, 28, 60]
+    /// shown is a cross-fade between the two levels around `BackgroundSpec.blurPosition`. The steps are
+    /// kept small (no jump wider than 16px) so the cross-fade reads as gradual blur, not a dissolve.
+    nonisolated static let levelRadii: [CGFloat] = [0, 4, 8, 14, 28, 44, 60]
     /// Blurred levels are rendered this much smaller: a blur hides the missing pixels, and it quarters the
     /// memory and the time.
     nonisolated static let blurredScale: CGFloat = 0.5

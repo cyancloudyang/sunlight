@@ -361,8 +361,8 @@ final class BackgroundRenderer {
         let needed = Set([Int(position.rounded(.down)), Int(position.rounded(.up))]).filter { $0 >= 1 }
         // Made levels are kept for the picture's life: a level let go when the zoom moved away was made
         // again only once the zoom came back, so every zoom out (every return from a window) showed the
-        // picture sharper for a moment and then faded the blur in. That was the blink. Four levels at half
-        // scale are a few screens of pixels at most.
+        // picture sharper for a moment and then faded the blur in. That was the blink. The blurred levels
+        // at half scale are a few screens of pixels at most.
         for level in needed.sorted() where levels[level] == nil && !levelsInFlight.contains(level) {
             levelsInFlight.insert(level)
             let gen = generation

@@ -70,22 +70,18 @@ if [[ -n "$SPARKLE_FEED_URL" && -n "$SPARKLE_PUBLIC_KEY" ]]; then
   /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_KEY" "$APP/Contents/Info.plist"
 fi
 
-# Live windows: the helper (with the Dock add-on and its loader built in) goes in Contents/Helpers, signed
-# before the app, as nested code has to be. With a real identity it's signed like the app and carries the
-# launch daemon's plist, so the app can register it with SMAppService: launchd won't run an ad-hoc daemon,
-# and the daemon only answers apps from its own team. Ad-hoc builds leave the daemon out and reach root
-# through sudo; an ad-hoc signature is the same for the same binary, so the helper's SHA-256, which the
-# passwordless sudoers rule is pinned to, only changes when its code does. (A certificate signature carries
-# its signing time, so with one every build would ask for the password again; the daemon needs none.)
-scripts/build-live-windows.sh
-mkdir -p "$APP/Contents/Helpers"
-cp build/live-windows/SunlightLiveWindows "$APP/Contents/Helpers/SunlightLiveWindows"
-if [[ "$SIGN" == "-" ]]; then
-  codesign --force --sign - --identifier "$BUNDLE_ID.live-windows" "$APP/Contents/Helpers/SunlightLiveWindows"
-else
-  mkdir -p "$APP/Contents/Library/LaunchDaemons"
-  cp Resources/LaunchDaemons/*.plist "$APP/Contents/Library/LaunchDaemons/"
-  codesign "${SIGN_FLAGS[@]}" --identifier "$BUNDLE_ID.live-windows" "$APP/Contents/Helpers/SunlightLiveWindows"
+# Live windows: not packaged. The helper carries the Dock add-on and its loader (injection into a system
+# process) and, with a real identity, a launch daemon; Tablecloth v1 is a snapshot map and must not ship an
+# injector at all (handoff #11). Nothing under Contents/Helpers or Contents/Library/LaunchDaemons, and
+# scripts/build-live-windows.sh is not run from here.
+if [[ -e "$APP/Contents/Helpers" || -e "$APP/Contents/Library/LaunchDaemons" ]]; then
+  echo "Refusing to sign: $APP carries a live-windows helper or launch daemon" >&2
+  exit 1
+fi
+if /usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
+   || /usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP/Contents/Info.plist" >/dev/null 2>&1; then
+  echo "Refusing to sign: $APP carries a Sparkle feed or key with no fork-owned configuration" >&2
+  exit 1
 fi
 codesign "${SIGN_FLAGS[@]}" --identifier "$BUNDLE_ID" "$APP"
 codesign --verify --strict --deep "$APP"

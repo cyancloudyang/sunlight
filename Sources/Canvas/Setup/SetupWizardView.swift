@@ -183,88 +183,96 @@ struct SetupPageView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if spec.showsIcon {
-                Image(nsImage: Self.appIcon)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 112 * s, height: 112 * s)
-                    .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.22), radius: 18 * s, y: 10 * s)
-                    .modifier(Arrival(held: held(.sun), reduceMotion: reduceMotion, scale: 0.85,
-                                      duration: Arrival.sunDuration, rise: 40))
-                    // When the chime lands on it: a slight settle.
-                    .keyframeAnimator(initialValue: 1.0, trigger: isCurrent && model.reveal >= .headline) { icon, size in
-                        icon.scaleEffect(size)
-                    } keyframes: { _ in
-                        CubicKeyframe(reduceMotion ? 1 : 1.05, duration: 0.22)
-                        CubicKeyframe(1, duration: 0.9)
-                    }
-                    .padding(.top, 16 * s)
-                    .padding(.bottom, 56 * s)
-                    .accessibilityHidden(true)
-            }
-            if let eyebrow = spec.eyebrow {
-                Text(eyebrow)
-                    .font(.system(size: 13 * s, weight: .semibold))
-                    .tracking(1.6 * s)
-                    .textCase(.uppercase)
-                    .foregroundStyle(.primary.opacity(0.55))
-                    .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
-                    .padding(.bottom, 22 * s)
-            }
-            Text(spec.headline)
-                .font(.system(size: (tall ? 52 : 64) * s, weight: .semibold))
-                .tracking(-1.6 * s)
-                .multilineTextAlignment(.center)
-                .lineSpacing(-2 * s)
-                .foregroundStyle(.primary)
-                .frame(maxWidth: 760 * s)
-                .fixedSize(horizontal: false, vertical: true)
-                .contentTransition(.opacity)
-                .animation(.easeInOut(duration: 0.35), value: spec.headline)
-                .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
-                .accessibilityAddTraits(.isHeader)
-            if let subheadline = spec.subheadline {
-                Text(subheadline)
-                    .font(.system(size: (tall ? 22 : 26) * s, weight: .regular))
-                    .tracking(-0.3 * s)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.primary.opacity(0.6))
-                    .frame(maxWidth: 820 * s)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 18 * s)
-                    .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
-            }
-            if !spec.paragraphs.isEmpty {
-                VStack(spacing: 12 * s) {
-                    ForEach(Array(spec.paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                        Text(paragraph)
-                            .font(.system(size: (tall ? 18 : 20) * s))
-                            .multilineTextAlignment(.center)
-                            .lineSpacing(4 * s)
-                            .foregroundStyle(.primary.opacity(0.72))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            // The text and the demo share the space above the action row and centre within it. The row
+            // below is pinned, so the primary button stays in one place no matter how tall the demo is.
+            VStack(spacing: 0) {
+                if spec.showsIcon {
+                    Image(nsImage: Self.appIcon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 112 * s, height: 112 * s)
+                        .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.22), radius: 18 * s, y: 10 * s)
+                        .modifier(Arrival(held: held(.sun), reduceMotion: reduceMotion, scale: 0.85,
+                                          duration: Arrival.sunDuration, rise: 40))
+                        // When the chime lands on it: a slight settle.
+                        .keyframeAnimator(initialValue: 1.0, trigger: isCurrent && model.reveal >= .headline) { icon, size in
+                            icon.scaleEffect(size)
+                        } keyframes: { _ in
+                            CubicKeyframe(reduceMotion ? 1 : 1.05, duration: 0.22)
+                            CubicKeyframe(1, duration: 0.9)
+                        }
+                        .padding(.top, 16 * s)
+                        .padding(.bottom, 56 * s)
+                        .accessibilityHidden(true)
                 }
-                .frame(maxWidth: 600 * s)
-                .padding(.top, 20 * s)
-                .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
+                if let eyebrow = spec.eyebrow {
+                    Text(eyebrow)
+                        .font(.system(size: 13 * s, weight: .semibold))
+                        .tracking(1.6 * s)
+                        .textCase(.uppercase)
+                        .foregroundStyle(.primary.opacity(0.55))
+                        .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
+                        .padding(.bottom, 22 * s)
+                }
+                Text(spec.headline)
+                    .font(.system(size: (tall ? 52 : 64) * s, weight: .semibold))
+                    .tracking(-1.6 * s)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(-2 * s)
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: 760 * s)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.35), value: spec.headline)
+                    .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
+                    .accessibilityAddTraits(.isHeader)
+                if let subheadline = spec.subheadline {
+                    Text(subheadline)
+                        .font(.system(size: (tall ? 22 : 26) * s, weight: .regular))
+                        .tracking(-0.3 * s)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.primary.opacity(0.6))
+                        .frame(maxWidth: 820 * s)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 18 * s)
+                        .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
+                }
+                if !spec.paragraphs.isEmpty {
+                    VStack(spacing: 12 * s) {
+                        ForEach(Array(spec.paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                            Text(paragraph)
+                                .font(.system(size: (tall ? 18 : 20) * s))
+                                .multilineTextAlignment(.center)
+                                .lineSpacing(4 * s)
+                                .foregroundStyle(.primary.opacity(0.72))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: 600 * s)
+                    .padding(.top, 20 * s)
+                    .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
+                }
+                extra
+                    .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
             }
-            extra
-                .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
-            actions
-                .modifier(Arrival(held: actionsHeld, reduceMotion: reduceMotion, scale: 0.96,
-                                  duration: Arrival.buttonDuration, rise: 20))
-                .padding(.top, spec.extra == .none ? 40 * s : 30 * s)
-            footnote
-                .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
-            if let notice = model.notice, isCurrent {
-                NoticeView(notice: notice, scale: s)
-                    .padding(.top, 22 * s)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Pinned lower-middle (`SetupPageLayout`): the same place on every page.
+            VStack(spacing: 0) {
+                actions
+                    .modifier(Arrival(held: actionsHeld, reduceMotion: reduceMotion, scale: 0.96,
+                                      duration: Arrival.buttonDuration, rise: 20))
+                footnote
+                    .modifier(Arrival(held: held(.headline), reduceMotion: reduceMotion))
+                if let notice = model.notice, isCurrent {
+                    NoticeView(notice: notice, scale: s)
+                        .padding(.top, 22 * s)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
             }
+            .padding(.bottom, SetupPageLayout.bottomMargin * s)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .offset(y: -0.04 * 982 * s)
         .animation(.easeInOut(duration: 0.3), value: model.notice)
     }
 
@@ -274,18 +282,8 @@ struct SetupPageView: View {
         case .none:
             EmptyView()
         case .loginItem:
-            VStack(spacing: 6 * s) {
-                Toggle(isOn: $model.loginItem) {
-                    Text("Open Sunlight when I log in").font(.system(size: 15 * s, weight: .medium)).foregroundStyle(.primary.opacity(0.85))
-                }
-                .toggleStyle(.switch)
-                Text("Brings Sunlight, and this window, back by itself after the restart live windows need.")
-                    .font(.system(size: 13 * s))
-                    .foregroundStyle(.primary.opacity(0.45))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 480 * s)
-            }
-            .padding(.top, 28 * s)
+            // No login item is offered: Sunlight doesn't install one (`SetupWizard`'s page says so).
+            EmptyView()
         case .consent:
             Toggle(isOn: $model.consent) {
                 Text("I understand, and this is a Mac I'm comfortable changing")

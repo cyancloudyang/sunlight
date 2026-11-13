@@ -71,28 +71,15 @@ enum SetupFlow {
         switch record.resume {
         case .screenRecording?:
             if !status.screenRecording { return .screenRecording }
-        case .recovery?:
-            if !status.sipAllowsLiveWindows || !status.bootArgument { return .welcomeBack }
         default:
             break
         }
         if !record.welcomed { return .welcome }
-        if !record.loginItemChosen { return .loginItem }
         if !status.accessibility { return .accessibility }
-        if !status.screenRecording && !record.skippedScreenRecording { return .screenRecording }
+        if !status.screenRecording { return .screenRecording }
         // Once, before the canvas first opens; a Mac with live windows on has long found its way around.
         if !record.learnedBasics && !status.liveWindowsLoaded { return .basics }
-        if !record.startedLive || !mac.liveWindowsSupported { return .preview }
-        if !status.sipAllowsLiveWindows, !record.consented { return .consent }
-        // The helper before the restart: a build with no helper at all stops here rather than in Recovery.
-        switch status.helper {
-        case .daemonNeedsApproval, .daemonNotRegistered, .missing: return .helper
-        case .daemonEnabled, .passwordless, .asksForPassword: break
-        }
-        if !status.sipAllowsLiveWindows { return .recovery }
-        if !status.bootArgument { return .welcomeBack }
-        if !status.liveWindowsLoaded { return .load }
-        return .tour
+        return .preview
     }
 
     /// The step that just got done between two checks, among the ones the wizard sends the person to
@@ -124,7 +111,7 @@ enum SetupFlow {
                               quietReloadPaused: Bool = false) -> Bool {
         if record.resume != nil { return true }
         if previewMode {
-            return !record.welcomed || !record.loginItemChosen || !status.accessibility || !status.screenRecording && !record.skippedScreenRecording
+            return !record.welcomed || !status.accessibility || !status.screenRecording
                 || !record.learnedBasics
         }
         if onlyTheAddOnIsMissing(status), reloadsQuietly(status), !quietReloadPaused { return false }
@@ -150,51 +137,25 @@ enum SetupFlow {
         var state: State
     }
 
-    /// The rail beside the page: the preview's five steps, then live windows as one folded entry until
-    /// that phase is started, and its own steps once it is. A build without the daemon (ad-hoc signed)
-    /// has no helper step to show.
+    /// The rail beside the page: the canvas's five steps. Tablecloth has no live-windows phase.
     static func rail(for status: SetupStatus, record: Record, mac: Mac, showing page: Page) -> [RailEntry] {
         func entry(_ title: String, _ pages: [Page], done: Bool) -> RailEntry {
             RailEntry(title: title, pages: pages, state: pages.contains(page) ? .current : done ? .done : .todo)
         }
-        var rail = [
-            entry("Welcome", [.welcome, .loginItem], done: record.welcomed && record.loginItemChosen),
+        return [
+            entry("Welcome", [.welcome], done: record.welcomed),
             entry("Accessibility", [.accessibility], done: status.accessibility),
             entry("Screen Recording", [.screenRecording], done: status.screenRecording),
             entry("The basics", [.basics], done: record.learnedBasics || status.liveWindowsLoaded),
             entry("Preview", [.preview], done: page.isLive || status.liveWindowsLoaded),
         ]
-        guard mac.liveWindowsSupported else { return rail }
-        guard record.startedLive || page.isLive else {
-            rail.append(entry("Live windows", [], done: status.isComplete))
-            return rail
-        }
-        rail.append(entry("Why SIP goes partly off", [.consent], done: record.consented || status.sipAllowsLiveWindows))
-        switch status.helper {
-        case .passwordless, .asksForPassword: break
-        case .daemonEnabled, .daemonNeedsApproval, .daemonNotRegistered, .missing:
-            rail.append(entry("Background helper", [.helper], done: status.helper == .daemonEnabled))
-        }
-        rail.append(entry("Recovery restart", [.recovery, .welcomeBack], done: status.sipAllowsLiveWindows && status.bootArgument))
-        rail.append(entry("Load live windows", [.load], done: status.liveWindowsLoaded))
-        rail.append(entry("Tour", [.tour], done: false))
-        return rail
     }
 
     // MARK: Progress
 
-    /// Steps done out of the steps this Mac has: the two permissions, and on a Mac that can have live
-    /// windows, the helper (an ad-hoc build's password path counts as done), SIP, the boot argument and
-    /// the load.
+    /// Steps done out of the steps this Mac has: the two permissions. Live windows never count.
     static func progress(for status: SetupStatus, mac: Mac) -> (done: Int, total: Int) {
-        var steps = [status.accessibility, status.screenRecording]
-        if mac.liveWindowsSupported {
-            let helperDone: Bool = switch status.helper {
-            case .daemonEnabled, .passwordless, .asksForPassword: true
-            case .daemonNeedsApproval, .daemonNotRegistered, .missing: false
-            }
-            steps += [helperDone, status.sipAllowsLiveWindows, status.bootArgument, status.liveWindowsLoaded]
-        }
+        let steps = [status.accessibility, status.screenRecording]
         return (steps.filter { $0 }.count, steps.count)
     }
 

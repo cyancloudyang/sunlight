@@ -28,29 +28,29 @@ final class SetupFlowTests: XCTestCase {
 
     func testAFreshMacStartsAtWelcomeThenThePermissions() {
         XCTAssertEqual(page(fresh, .fresh), .welcome)
-        XCTAssertEqual(page(fresh, Record(welcomed: true)), .loginItem, "open at login has a page of its own")
+        XCTAssertEqual(page(fresh, Record(welcomed: true)), .accessibility, "Tablecloth never asks to change login items")
         XCTAssertEqual(page(fresh, Record(welcomed: true, loginItemChosen: true)), .accessibility, "the permissions before the tutorial")
         XCTAssertEqual(page(fresh, welcomed), .accessibility)
         XCTAssertEqual(page(status(screenRecording: false, sip: false, bootArgument: false, helper: .daemonNotRegistered, loaded: false), welcomed), .screenRecording)
         XCTAssertEqual(page(permissionsDone, welcomed), .preview)
     }
 
-    func testScreenRecordingCanBeSkippedAndTheRelaunchComesBackToIt() {
+    func testScreenRecordingCannotBeSkippedAndTheRelaunchComesBackToIt() {
         var skipped = welcomed
         skipped.skippedScreenRecording = true
         let noRecording = status(screenRecording: false, sip: false, bootArgument: false, helper: .daemonNotRegistered, loaded: false)
-        XCTAssertEqual(page(noRecording, skipped), .preview)
+        XCTAssertEqual(page(noRecording, skipped), .screenRecording)
         var resuming = welcomed
         resuming.resume = .screenRecording
         XCTAssertEqual(page(noRecording, resuming), .screenRecording)
         XCTAssertEqual(page(permissionsDone, resuming), .preview, "granted: the relaunch lands past the permission")
     }
 
-    func testThePreviewPageHoldsUntilLiveWindowsAreStarted() {
+    func testThePreviewPageIsTheEndOfTheWizard() {
         XCTAssertEqual(page(permissionsDone, welcomed), .preview)
         var started = welcomed
         started.startedLive = true
-        XCTAssertEqual(page(permissionsDone, started), .consent)
+        XCTAssertEqual(page(permissionsDone, started), .preview, "Tablecloth has no live-windows phase")
     }
 
     func testAMacWithoutLiveWindowsStaysOnThePreview() {
@@ -62,47 +62,20 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertNil(SetupFlow.litRays(for: permissionsDone, mac: intel))
     }
 
-    // MARK: The live phase
+    // MARK: No live phase
 
-    func testConsentComesBeforeTheHelperOnce() {
-        var started = welcomed
-        started.startedLive = true
-        XCTAssertEqual(page(permissionsDone, started), .consent)
-        XCTAssertEqual(page(permissionsDone, live), .helper)
-    }
-
-    /// The helper's switch in Login Items doesn't need SIP off, and with it on nothing after the restart
-    /// asks for anything: so it comes before Recovery, and a build with no helper stops short of it.
-    func testTheHelperComesBeforeRecovery() {
-        XCTAssertEqual(page(permissionsDone, live), .helper)
-        XCTAssertEqual(page(status(sip: false, bootArgument: false, helper: .daemonNeedsApproval, loaded: false), live), .helper)
-        XCTAssertEqual(page(status(sip: false, bootArgument: false, helper: .missing, loaded: false), live), .helper)
-        XCTAssertEqual(page(helperOn, live), .recovery)
-        XCTAssertEqual(page(status(sip: false, bootArgument: false, helper: .asksForPassword, loaded: false), live), .recovery, "an ad-hoc build has no helper step")
-        XCTAssertEqual(page(status(sip: false, bootArgument: false, helper: .passwordless, loaded: false), live), .recovery)
-    }
-
-    func testBackFromRecoveryTheWizardChecksItself() {
+    /// The live-windows phase is gone: no record or status routes to its pages, and a stale Recovery
+    /// resume lands on the canvas page.
+    func testNoLivePhase() {
+        for record in [live, welcomed] {
+            XCTAssertEqual(page(permissionsDone, record), .preview)
+            XCTAssertEqual(page(helperOn, record), .preview)
+            XCTAssertEqual(page(status(loaded: false), record), .preview)
+            XCTAssertEqual(page(status(), record), .preview)
+        }
         var back = live
         back.resume = .recovery
-        XCTAssertEqual(page(helperOn, back), .welcomeBack, "SIP still on: say so")
-        XCTAssertEqual(page(status(bootArgument: false, loaded: false), back), .welcomeBack, "boot argument missing: set it from here")
-        XCTAssertEqual(page(status(loaded: false), back), .load, "both set: straight to the load")
-        // Without the resume hint, a missing boot argument still lands on the page that sets it.
-        XCTAssertEqual(page(status(bootArgument: false, loaded: false), live), .welcomeBack)
-        // The helper turned off meanwhile: back to its page before anything else.
-        XCTAssertEqual(page(status(helper: .daemonNotRegistered, loaded: false), back), .helper)
-    }
-
-    func testTheHelperIsOnlyAStepWhenTheBuildHasOne() {
-        XCTAssertEqual(page(status(helper: .daemonNotRegistered, loaded: false), live), .helper)
-        XCTAssertEqual(page(status(helper: .daemonNeedsApproval, loaded: false), live), .helper)
-        XCTAssertEqual(page(status(helper: .missing, loaded: false), live), .helper)
-        XCTAssertEqual(page(status(helper: .asksForPassword, loaded: false), live), .load)
-        XCTAssertEqual(page(status(helper: .passwordless, loaded: false), live), .load)
-        XCTAssertEqual(page(status(helper: .daemonEnabled, loaded: false), live), .load)
-        let adHoc = SetupFlow.rail(for: status(helper: .asksForPassword, loaded: false), record: live, mac: .supported, showing: .load)
-        XCTAssertFalse(adHoc.contains { $0.title == "Background helper" })
+        XCTAssertEqual(page(helperOn, back), .preview)
     }
 
     /// The load page starts the load as it opens once the daemon is on and nothing can ask; a build
@@ -116,9 +89,9 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertFalse(SetupFlow.loadsByItself(status(helper: .missing, loaded: false)))
     }
 
-    func testLoadedEndsOnTheTour() {
-        XCTAssertEqual(page(status(), live), .tour)
-        XCTAssertEqual(page(status(), welcomed), .preview, "live windows loaded without the wizard: the preview page still closes the loop")
+    func testLoadedEndsOnTheCanvasPage() {
+        XCTAssertEqual(page(status(), live), .preview)
+        XCTAssertEqual(page(status(), welcomed), .preview)
     }
 
     // MARK: Opening at launch
@@ -129,59 +102,47 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertFalse(SetupFlow.opensAtLaunch(status: permissionsDone, record: welcomed, mac: .supported, previewMode: true, showsAtLaunch: true), "the preview works: the demo mode card takes over")
         var skipped = welcomed
         skipped.skippedScreenRecording = true
-        XCTAssertFalse(SetupFlow.opensAtLaunch(status: status(screenRecording: false, sip: false, bootArgument: false, helper: .daemonNotRegistered, loaded: false),
-                                               record: skipped, mac: .supported, previewMode: true, showsAtLaunch: true))
+        XCTAssertTrue(SetupFlow.opensAtLaunch(status: status(screenRecording: false, sip: false, bootArgument: false, helper: .daemonNotRegistered, loaded: false),
+                                              record: skipped, mac: .supported, previewMode: true, showsAtLaunch: true), "a skip from an older build doesn't stand in for the grant")
         var back = live
         back.resume = .recovery
         XCTAssertTrue(SetupFlow.opensAtLaunch(status: permissionsDone, record: back, mac: .supported, previewMode: true, showsAtLaunch: false))
-        // Past preview mode, the checkbox rules while a live step is missing.
-        XCTAssertTrue(SetupFlow.opensAtLaunch(status: status(bootArgument: false, loaded: false), record: live, mac: .supported, previewMode: false, showsAtLaunch: true))
-        XCTAssertFalse(SetupFlow.opensAtLaunch(status: status(bootArgument: false, loaded: false), record: live, mac: .supported, previewMode: false, showsAtLaunch: false))
-        XCTAssertFalse(SetupFlow.opensAtLaunch(status: status(loaded: false), record: live, mac: .supported, previewMode: false, showsAtLaunch: true),
-                       "only the add-on is missing (a Dock restarted at the last quit) and the helper reloads it quietly")
-        XCTAssertFalse(SetupFlow.opensAtLaunch(status: status(helper: .passwordless, loaded: false), record: live, mac: .supported, previewMode: false, showsAtLaunch: true))
-        XCTAssertTrue(SetupFlow.opensAtLaunch(status: status(helper: .asksForPassword, loaded: false), record: live, mac: .supported, previewMode: false, showsAtLaunch: true),
-                      "the reload would ask for a password: the wizard's Load page asks instead")
-        XCTAssertTrue(SetupFlow.opensAtLaunch(status: status(loaded: false), record: live, mac: .supported, previewMode: false, showsAtLaunch: true,
-                                              quietReloadPaused: true), "quiet reloads stopped after Dock crashes")
+        // Past preview mode, the checkbox rules while a permission is missing; live steps never count.
+        XCTAssertTrue(SetupFlow.opensAtLaunch(status: status(screenRecording: false), record: live, mac: .supported, previewMode: false, showsAtLaunch: true))
+        XCTAssertFalse(SetupFlow.opensAtLaunch(status: status(screenRecording: false), record: live, mac: .supported, previewMode: false, showsAtLaunch: false))
+        XCTAssertFalse(SetupFlow.opensAtLaunch(status: status(bootArgument: false, loaded: false), record: live, mac: .supported, previewMode: false, showsAtLaunch: true),
+                       "SIP and the add-on are not Tablecloth steps")
         XCTAssertFalse(SetupFlow.opensAtLaunch(status: status(), record: live, mac: .supported, previewMode: false, showsAtLaunch: true))
     }
 
     // MARK: The rail and the rays
 
-    func testTheRailFoldsLiveWindowsUntilTheyAreStarted() {
-        let folded = SetupFlow.rail(for: permissionsDone, record: welcomed, mac: .supported, showing: .preview)
-        XCTAssertEqual(folded.map(\.title), ["Welcome", "Accessibility", "Screen Recording", "The basics", "Preview", "Live windows"])
-        XCTAssertEqual(folded.map(\.state), [.done, .done, .done, .done, .current, .todo])
-        let open = SetupFlow.rail(for: helperOn, record: live, mac: .supported, showing: .recovery)
-        XCTAssertEqual(open.map(\.title), ["Welcome", "Accessibility", "Screen Recording", "The basics", "Preview", "Why SIP goes partly off",
-                                          "Background helper", "Recovery restart", "Load live windows", "Tour"])
-        XCTAssertEqual(open.map(\.state), [.done, .done, .done, .done, .done, .done, .done, .current, .todo, .todo])
-        let waiting = SetupFlow.rail(for: permissionsDone, record: live, mac: .supported, showing: .helper)
-        XCTAssertEqual(waiting[6].state, .current)
-        XCTAssertEqual(waiting[7].state, .todo)
+    func testTheRailIsAlwaysTheFiveCanvasSteps() {
+        let rail = SetupFlow.rail(for: permissionsDone, record: welcomed, mac: .supported, showing: .preview)
+        XCTAssertEqual(rail.map(\.title), ["Welcome", "Accessibility", "Screen Recording", "The basics", "Preview"])
+        XCTAssertEqual(rail.map(\.state), [.done, .done, .done, .done, .current])
+        let started = SetupFlow.rail(for: helperOn, record: live, mac: .supported, showing: .preview)
+        XCTAssertEqual(started.map(\.title), rail.map(\.title), "no live-windows entries, even for a record that started them")
     }
 
     func testTheRaysFollowProgress() {
-        XCTAssertTrue(SetupFlow.progress(for: fresh, mac: .supported) == (0, 6))
+        XCTAssertTrue(SetupFlow.progress(for: fresh, mac: .supported) == (0, 2))
         XCTAssertEqual(SetupFlow.litRays(for: fresh, mac: .supported), 0)
-        XCTAssertEqual(SetupFlow.litRays(for: permissionsDone, mac: .supported), 3)
-        XCTAssertEqual(SetupFlow.litRays(for: status(loaded: false), mac: .supported), 7)
-        XCTAssertNil(SetupFlow.litRays(for: status(), mac: .supported))
-        XCTAssertTrue(SetupFlow.progress(for: status(helper: .asksForPassword, loaded: false), mac: .supported) == (5, 6), "an ad-hoc build's password path counts as done")
+        XCTAssertTrue(SetupFlow.progress(for: permissionsDone, mac: .supported) == (2, 2))
+        XCTAssertNil(SetupFlow.litRays(for: permissionsDone, mac: .supported))
+        XCTAssertNil(SetupFlow.litRays(for: status(loaded: false), mac: .supported), "live windows never count")
     }
 
-    /// Open at login: asked once, after the welcome, inside the Welcome step; a Mac welcomed before the
-    /// page existed answered it there, and never sees it.
-    func testOpenAtLoginIsItsOwnPageInTheWelcomeStep() {
+    /// Tablecloth never asks to open at login: the Welcome step is one page, and a Mac welcomed before
+    /// the page was removed goes straight to the permissions.
+    func testTheWelcomeHasNoOpenAtLoginPage() {
         let chosenNot = Record(welcomed: true)
-        XCTAssertEqual(page(permissionsDone, chosenNot), .loginItem, "even with the permissions already granted")
+        XCTAssertEqual(page(permissionsDone, chosenNot), .basics, "straight past the welcome, permissions already granted")
         XCTAssertTrue(SetupFlow.opensAtLaunch(status: permissionsDone, record: chosenNot, mac: .supported, previewMode: true, showsAtLaunch: true))
-        let rail = SetupFlow.rail(for: fresh, record: chosenNot, mac: .supported, showing: .loginItem)
+        let rail = SetupFlow.rail(for: fresh, record: chosenNot, mac: .supported, showing: .accessibility)
         XCTAssertEqual(rail.first?.title, "Welcome")
-        XCTAssertEqual(rail.first?.state, .current)
+        XCTAssertEqual(rail.first?.state, .done)
         XCTAssertEqual(rail.count, SetupFlow.rail(for: fresh, record: .fresh, mac: .supported, showing: .welcome).count)
-        XCTAssertEqual(SetupFlow.rail(for: fresh, record: welcomed, mac: .supported, showing: .accessibility).first?.state, .done)
         XCTAssertFalse(SetupFlow.Page.loginItem.isLive)
 
         XCTAssertTrue(SetupRecord.loginItemChosen(stored: nil, welcomed: true), "welcomed before the page existed")
@@ -208,21 +169,21 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertEqual(page(permissionsDone, notLearned), .basics)
         var skipped = notLearned
         skipped.skippedScreenRecording = true
-        XCTAssertEqual(page(status(screenRecording: false, sip: false, bootArgument: false, helper: .daemonNotRegistered, loaded: false), skipped), .basics)
+        XCTAssertEqual(page(status(screenRecording: false, sip: false, bootArgument: false, helper: .daemonNotRegistered, loaded: false), skipped), .screenRecording, "no skip stands in for the grant")
         XCTAssertEqual(page(permissionsDone, welcomed), .preview)
-        XCTAssertEqual(page(status(), Record(welcomed: true, loginItemChosen: true, consented: true, startedLive: true)), .tour, "live windows on: no tutorial")
+        XCTAssertEqual(page(status(), Record(welcomed: true, loginItemChosen: true, consented: true, startedLive: true)), .preview, "no live phase: the canvas page")
         XCTAssertFalse(SetupFlow.Page.basics.isLive)
         XCTAssertTrue(SetupFlow.opensAtLaunch(status: permissionsDone, record: notLearned, mac: .supported, previewMode: true, showsAtLaunch: true))
         XCTAssertFalse(SetupFlow.opensAtLaunch(status: permissionsDone, record: welcomed, mac: .supported, previewMode: true, showsAtLaunch: true))
         let rail = SetupFlow.rail(for: permissionsDone, record: notLearned, mac: .supported, showing: .basics)
         XCTAssertEqual(rail.first { $0.state == .current }?.title, "The basics")
-        XCTAssertTrue(SetupFlow.progress(for: permissionsDone, mac: .supported) == (2, 6), "the tutorial isn't a step the rays count")
+        XCTAssertTrue(SetupFlow.progress(for: permissionsDone, mac: .supported) == (2, 2), "the tutorial isn't a step the rays count")
     }
 
     func testEveryReviewScenarioLandsOnItsPage() {
         let expected: [String: SetupFlow.Page] = [
-            "fresh": .welcome, "login-item": .loginItem, "basics": .basics, "permissions-done": .preview, "helper-waiting": .helper, "sip-on": .recovery, "boot-arg-missing": .welcomeBack,
-            "ready-to-load": .load, "ad-hoc-build": .load, "done": .tour, "intel": .preview, "no-admin": .consent,
+            "fresh": .welcome, "login-item": .accessibility, "basics": .basics, "permissions-done": .preview, "helper-waiting": .preview, "sip-on": .preview, "boot-arg-missing": .preview,
+            "ready-to-load": .preview, "ad-hoc-build": .preview, "done": .preview, "intel": .preview, "no-admin": .preview,
         ]
         for scenario in SetupReview.scenarios {
             XCTAssertEqual(SetupFlow.page(for: scenario.status, record: scenario.record, mac: scenario.mac), expected[scenario.name], scenario.name)
