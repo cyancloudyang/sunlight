@@ -78,4 +78,49 @@ final class EntryFlightTests: XCTestCase {
         let v = EntryFlight.velocity([(0.0, 0.0), (0.6, 0.6), (0.6, 0.9), (0.62, 0.95)])
         XCTAssertEqual(v, (0.62 - 0.6) / 0.35, accuracy: 0.001)
     }
+
+    // MARK: Release momentum (Q6 — velocity via fly)
+
+    /// A hand that sped up all the way to the lift is a flick, and the release keeps it: progress per
+    /// second becomes the entry path's own units per second (one unit of progress is one path length),
+    /// which is exactly what `fly` takes — it divides by the release path's own length itself
+    /// (`Spring v0 = speed / length`), so nothing is divided here.
+    func testReleaseSpeedCarriesAnAcceleratingFlick() {
+        let samples: [(progress: CGFloat, time: CFTimeInterval)] = [(0.0, 0.0), (0.3, 0.08), (0.6, 0.15)]
+        let v = EntryFlight.velocity(samples)
+        XCTAssertGreaterThan(v, 0)
+        let speed = EntryFlight.releaseSpeed(velocity: v, entryLength: 400)
+        XCTAssertEqual(speed, v * 400, accuracy: 0.001)
+        XCTAssertGreaterThan(speed, 0)   // same way the hand was going: in, toward the overview
+    }
+
+    /// Holding still and letting go is not a flick: the spring starts from rest, as it does today.
+    func testReleaseSpeedIsZeroWhenTheHandHeldStill() {
+        let still: [(progress: CGFloat, time: CFTimeInterval)] = [(0.5, 0.0), (0.5, 0.1), (0.5, 0.2)]
+        let v = EntryFlight.velocity(still)
+        XCTAssertEqual(v, 0, accuracy: 0.001)
+        XCTAssertEqual(EntryFlight.releaseSpeed(velocity: v, entryLength: 400), 0, accuracy: 0.001)
+    }
+
+    /// Letting go on the way back out keeps the sign: the release starts off still carried outward, so
+    /// it gives the camera back a little before coming home.
+    func testReleaseSpeedKeepsTheSignOfARetractingHand() {
+        let back: [(progress: CGFloat, time: CFTimeInterval)] = [(0.8, 0.0), (0.6, 0.1), (0.4, 0.2)]
+        let speed = EntryFlight.releaseSpeed(velocity: EntryFlight.velocity(back), entryLength: 400)
+        XCTAssertEqual(speed, -2.0 * 400, accuracy: 0.001)
+    }
+
+    /// A violent scrape can measure faster than the release can usefully fly: the carried rate is capped
+    /// so a bad sample can't fling the camera past its target.
+    func testReleaseSpeedIsCapped() {
+        XCTAssertEqual(EntryFlight.releaseSpeed(velocity: 500, entryLength: 400),
+                       EntryFlight.maxProgressRate * 400, accuracy: 0.001)
+        XCTAssertEqual(EntryFlight.releaseSpeed(velocity: -500, entryLength: 400),
+                       -EntryFlight.maxProgressRate * 400, accuracy: 0.001)
+    }
+
+    /// No measured path means nothing to carry: a release with no entry geometry starts from rest.
+    func testReleaseSpeedWithoutAnEntryPathIsZero() {
+        XCTAssertEqual(EntryFlight.releaseSpeed(velocity: 3, entryLength: 0), 0)
+    }
 }

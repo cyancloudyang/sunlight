@@ -1822,13 +1822,17 @@ final class CanvasController {
         // to where the real window still is.
         entryReleaseCards = entryCards.map { (proxy: $0.proxy, from: $0.proxy.worldRect.origin,
                                               to: commit ? $0.card.to : $0.card.from) }
-        Log.note(String(format: "Entry: released at %.2f — %@", t, commit ? "in" : "back out"))
+        // The release keeps the hand's momentum (Q6 — velocity via fly): the progress rate it was moving
+        // at becomes the spring's starting speed, in the entry path's own units (`EntryFlight.releaseSpeed`).
+        let speed = EntryFlight.releaseSpeed(velocity: EntryFlight.velocity(entrySamples),
+                                            entryLength: entryPath?.length ?? 0)
+        Log.note(String(format: "Entry: released at %.2f — %@, speed %.2f", t, commit ? "in" : "back out", speed))
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             view.set(camera: target)
             finishEntry(committed: commit)
             return
         }
-        view.fly(to: target, step: { [weak self] p in self?.driveEntryFlight(p) },
+        view.fly(to: target, speed: speed, step: { [weak self] p in self?.driveEntryFlight(p) },
                  completion: { [weak self] in self?.finishEntry(committed: commit) })
     }
 

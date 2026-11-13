@@ -61,4 +61,22 @@ enum EntryFlight {
         guard let first = recent.first, let last = recent.last else { return 0 }
         return (last.progress - first.progress) / max(last.time - first.time, 0.001)
     }
+
+    /// The fastest progress the release will carry, in progress per second: a scrape across the trackpad
+    /// can read as several times this, and a release flung that hard would overshoot far past its target.
+    /// Tunable on the real device.
+    static let maxProgressRate: CGFloat = 4
+
+    /// The speed the release spring starts with, in the entry path's own units per second.
+    ///
+    /// `velocity` is progress per second, and one unit of progress is one whole entry path, so the camera
+    /// was travelling `progress per second × entry path length` of path per second. That is `fly`'s
+    /// currency: it divides by the *release* path's own length itself (`Spring v0 = speed / length`), so
+    /// nothing is divided here — the two paths differ in length and that ratio is the whole point.
+    /// Sign is kept: letting go on the way back out starts the release still carried outward.
+    static func releaseSpeed(velocity: CGFloat, entryLength: CGFloat) -> CGFloat {
+        guard entryLength > 0 else { return 0 }
+        let rate = min(max(velocity, -maxProgressRate), maxProgressRate)
+        return rate * entryLength
+    }
 }

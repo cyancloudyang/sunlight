@@ -292,3 +292,13 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - 全部 Rulings（摘要；详文见各任务节）：计划测试期望值 `(90,80)` → 按 `toWorld` 语义为 `(130,140)` 并补 `toScreen` 回环断言；Task 1 期间 Desk/Controller 只加 inert 占位；See All 只在已在前台分支改走 `fly`、`pendingFitAll` 三处消费点保持 `animateCamera`；`entryStart/entryOverview` 用 `Camera` 而非 `Camera?`；新增 `CanvasView.revealArrival`（`setArrival` 对非开场窗口 no-op）；飞行集帧先 `toView` 再进 `EntryFlight.cards`（副屏原点）。
 - 待用户真机验收（**均未实测，不声称顺滑**）：① 上滑是否 1:1 跟手、无固定计时滞后；② 可见窗口是否真从真实堆叠位起飞、与相机同一 t 落位（无分裂感）；③ 释放弹簧手感（response/damping 0.45/0.72）；④ 不到 0.5 阈值是否干净回退（含从隐藏状态退场）；⑤ 屏外／最小化窗口原地淡入是否过亮；⑥ live 模式 realWindows 下的跟手；⑦ 占用（PerfLog，**无实测数字**）。可调项：`entryDistance 0.30`、`commitThreshold 0.5`、采样窗 5、spring 0.45/0.72。
 - 边界：未 push upstream，PR #1 保持 draft，未合并；Part B（dwell-to-zoom）未动；无 SIP／系统偏好／常驻流改动；ad-hoc 重签后需重新授予 Accessibility + Screen Recording。
+
+### #29 PM 验收 Part A 修订：释放弹簧带上抬起速度（Q6 — velocity via fly）
+
+- 发现（PM Important）：`endEntry`（`CanvasController.swift:1831`）的 `view.fly` 没传初速；`fly`（`CanvasView.swift:1303`）全新飞行 `speed = 0`；`EntryFlight.velocity`（:58）在 Sources 零调用＝死代码 —— 释放从静止起步，丢 flick 动量。选 **A**：接线，不删。
+- TDD：先写 5 条失败测试（`EntryFlightTests`）——加速样本→初速非零且同向；静止收尾→≈0；回抽样本→保持负号；暴力刮擦→封顶；无 entry 路径→0。RED：`type 'EntryFlight' has no member 'releaseSpeed' / 'maxProgressRate'`（编译失败）→ GREEN：`swift test --filter EntryFlightTests` → **14 tests, 0 failures** → 全量 `swift test` → **738 tests, 1 skipped, 0 failures**；`swift build` → Build complete, 无新增 warning。
+- 单位换算（PM 点名的那一步）：`velocity` 是「entry 路径 progress/秒」，一单位 progress ＝ 一整条 entry 路径，故相机实际速度＝`rate × entryPath.length`（路径自身单位/秒）—— 正是 `fly` 的口径，因为 `fly` 内部已 `Spring v0 = speed / path.length` 用**释放路径**自己的长度归一，这里不能再除。`EntryFlight.releaseSpeed(velocity:entryLength:)` 只做这一步换算 + 封顶 `maxProgressRate = 4`（刮擦读数可达数倍，400 那条测试锁住 `±4 × length`），并保留符号（回抽释放先被带出去一点再回来）。`entryLength` 取 `entryPath?.length ?? 0`，为 0 即从静止起步。
+- `CanvasView.fly`：签名加 `speed launchSpeed: CGFloat = 0`（在 `rho` 之后、`step` 之前），局部 `var speed = launchSpeed`；飞行中重定向仍以旧飞行当前速度为准（`speed = v * f.path.length` 覆盖），新入参只在「没有正在飞的」时生效 —— 默认 0 ＝ 既有全部调用点行为不变，未重写相机。
+- `CanvasController.endEntry`：`let speed = EntryFlight.releaseSpeed(velocity: EntryFlight.velocity(entrySamples), entryLength: entryPath?.length ?? 0)`，`view.fly(to: target, speed: speed, step:…, completion:…)`；`Log.note` 带上 `speed` 便于真机读日志。Reduce Motion 分支不变（直接 `view.set`）。
+- 未改动：采样窗（末 5 取末 3）、spring `0.45/0.72`、`commitThreshold 0.5`、卡 clamp —— 手感参数一律留给真机。
+- 待真机验收（**未实测，不声称顺滑**）：flick 释放是否真有「越甩越快」的收束感、`maxProgressRate 4` 是否偏高/偏低、回抽释放的外溢量是否自然、与卡飞行是否仍同步。

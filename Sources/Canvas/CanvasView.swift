@@ -1300,8 +1300,14 @@ final class CanvasView: NSView {
     /// settles. Calling it mid-flight re-aims from where the camera is, keeping its speed, so walking
     /// the switcher quickly stays one fluid move instead of restarting at every step. `step` rides the
     /// same spring (the focus flight's proxy growing with the camera); it is not called on interrupt.
-    func fly(to target: Camera, rho: CGFloat = CameraPath.rho, step: ((CGFloat) -> Void)? = nil, completion: (() -> Void)? = nil) {
-        var speed: CGFloat = 0   // along the path, in the path's own units per second
+    ///
+    /// `speed` is how fast this flight is already travelling, along the path, in the path's own units per
+    /// second — the momentum a hand lent it before letting go. Left at 0 a fresh flight starts from rest,
+    /// as every flight did before. A re-aim keeps the speed the flight already had: the new `speed` is
+    /// only read when nothing is flying.
+    func fly(to target: Camera, rho: CGFloat = CameraPath.rho, speed launchSpeed: CGFloat = 0,
+             step: ((CGFloat) -> Void)? = nil, completion: (() -> Void)? = nil) {
+        var speed = launchSpeed   // along the path, in the path's own units per second
         if let f = flight {
             let (x, v) = f.spring.evaluate(at: CGFloat(CACurrentMediaTime() - f.start))
             camera = f.path.camera(at: 1 + x)
