@@ -255,3 +255,10 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - Ruling: 计划里 `TrackpadRecognizerTests` 的 `XCTAssertEqual(ts.first, 0, accuracy:)` 不能编译（`CGFloat?` 非 `Double`）→ 改为 `ts.first ?? -1` — 计划文本的机械笔误，语义不变 — 代价：无。
 - Ruling: Task 1 只改识别器时 `Desk.trackpadPan` / `CanvasController.trackpadPan` 的 phase 穷尽 switch 编译失败 → 本任务先加 inert `case .entryBegan, .entryProgress, .entryEnded: break` 占位，路由与编排按计划在 Task 3 落地 — 保持任务粒度（Task 1 只碰识别器+其测试）且编译必须通过 — 代价：Task 1 与 Task 3 之间上滑入场在 app 内 inert（计划 Notes 已预期），此时上滑不再 See All。
 - 待真机验收：`entryDistance` 0.30 与起算点（0.12→0.30 区间）的实际跟手行程需真机确认，未调未测。
+
+### #28 Task 2 完成：纯模型 EntryFlight
+
+- 新增 `Sources/Canvas/EntryFlight.swift`（无 AppKit/CA）：`Card{from,to}`、`cards(snapshot:stored:insets:camera:)`（屏内有尺寸帧 ∩ stored 有位置）、`origin(_:at:)`（钳制 lerp）、`committed(progress:threshold:)`、`velocity(_:)`（末 3 个采样，progress/秒）、`commitThreshold=0.5`（可调）。
+- 测试：新增 `Tests/CanvasTests/EntryFlightTests.swift` 9 项全绿（选择集、相机/inset 换算、零尺寸跳过、屏外空集、lerp 钳制、commit 边界、velocity 采样窗）。
+- 全量：`swift test` → **731 tests, 1 skipped, 0 failures**。
+- Ruling: 计划里 `testCardsFromOriginUsesTheCameraAndInset` 的期望值 `(90,80)` 是 `toScreen` 语义，与计划 Steps 3 的 `camera.toWorld(content.origin)`（亦为 `WindowProxy.worldRect` 与设计 Q1 的语义）矛盾 → 按 `toWorld` 实现，测试改为断言 `from == (130,140)` **并**追加 `cam.toScreen(from) == (110,110)`（t=0 无跳变），另加一条 zoom 0.5 相机用例 — `from` 的意义是「卡片要放在世界的哪一点，才能通过入场相机看起来仍在真实屏幕原位」，只有 toWorld 能满足；若按 toScreen 实现，t=0 卡片会整体位移 = 2×camera.origin — 代价：偏离计划文本的字面期望值（语义与设计文档一致）。
