@@ -64,6 +64,7 @@ enum Settings {
     private static let tidyOrderKey = "TidyOrder"
     private static let panInertiaKey = "CanvasPanInertia"
     private static let seeAllGestureKey = "CanvasSeeAllGesture"
+    private static let gestureEntryKey = "CanvasGestureEntry"
     private static let realDesktopKey = "CanvasRealDesktop"
     private static let zoomInertiaKey = "CanvasZoomInertia"
     private static let snapToWindowsKey = "CanvasSnapToWindows"
@@ -268,6 +269,20 @@ enum Settings {
         set {
             defaults.set(newValue.rawValue, forKey: seeAllGestureKey)
             NotificationCenter.default.post(name: seeAllGestureDidChange, object: nil)
+        }
+    }
+
+    static let gestureEntryDidChange = Notification.Name("CanvasGestureEntryDidChange")
+
+    /// Entering the canvas by the four-finger swipe up follows the hand: the pull-back is driven by the
+    /// stroke (1:1), and the windows on screen fly from where they really are to where the canvas keeps
+    /// them, so the stacked desktop doesn't jump into a tidy canvas. On by default; off, entry is the
+    /// plain See All flight it was before, and the swipe is a pan until it is read as See All.
+    static var gestureEntry: Bool {
+        get { defaults.object(forKey: gestureEntryKey) == nil ? true : defaults.bool(forKey: gestureEntryKey) }
+        set {
+            defaults.set(newValue, forKey: gestureEntryKey)
+            NotificationCenter.default.post(name: gestureEntryDidChange, object: nil)
         }
     }
 

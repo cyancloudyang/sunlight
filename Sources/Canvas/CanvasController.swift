@@ -279,6 +279,21 @@ final class CanvasController {
     /// Four-finger travel that arrived while the canvas was still coming to the front; applied in
     /// `returnedToCanvas` for the same reason.
     private var pendingPan: CGVector?
+
+    // MARK: Gesture entry
+
+    /// The pull-back the four-finger swipe up is driving, while the fingers are down (`Settings.gestureEntry`).
+    /// Nil when no entry is under way. The path runs from where the canvas was to the overview, so the
+    /// hand's travel moves the camera along it 1:1 and a hand that goes back scrubs back out.
+    private var entryPath: CameraPath?
+    /// Where the entry started: where a release short of the commit threshold springs back to.
+    private var entryStart = Camera()
+    /// The overview the swipe is pulling back to (`view.overviewCamera` when it began).
+    private var entryOverview = Camera()
+    /// The progress samples of this entry, progress and time: the release reads the last few for its speed.
+    private var entrySamples: [(progress: CGFloat, time: CFTimeInterval)] = []
+    /// The canvas was off the screen when the swipe began: a release short of the threshold puts it away again.
+    private var entryCameFromHidden = false
     /// The four-finger drag under way began from a window, so the canvas is in front because of it.
     private var panBroughtCanvas = false
 
@@ -448,6 +463,7 @@ final class CanvasController {
         view.onOpenHere = { [weak self] point in self?.openHere(at: point) }
         view.onAnimationCancelled = { [weak self] in
             guard let self else { return }
+            self.cancelEntry()   // a flight cut short: the entry's cards land where they were going
             handoffTarget?.heldBack = false
             if let t = handoffTarget { unpark(t) }
             if let t = handoffTarget, t.pipShown != nil { t.pipShown = nil; view.pipChanged(t) }   // a return cut short
@@ -1465,7 +1481,15 @@ final class CanvasController {
         let fit = CanvasController.showFitsAll(requested: fitAll, returningToMap: activeProxy != nil && !NSApp.isActive, seeAll: seeAll)
         if fit { endShowDesktop(flyBack: false) }
         if NSApp.isActive {
-            if fit { view.fitAll(animated: true) }
+            if fit {
+                // See All with gesture entry on rides the same re-aimable spring as the swipe up, so a
+                // second thought mid-flight re-aims instead of restarting; off, the old fixed-timer fit.
+                if seeAll, Settings.gestureEntry, let overview = view.overviewCamera {
+                    view.fly(to: overview)
+                } else {
+                    view.fitAll(animated: true)
+                }
+            }
             return
         }
         pendingFitAll = fit
@@ -1669,6 +1693,7 @@ final class CanvasController {
             Log.note("Pan: four-finger spread")
             showDesktop()
         case .began:
+            cancelEntry()   // a new drag is not the entry any more
             Log.note("Pan: four-finger drag\(inFront ? "" : ", bringing the canvas back")")
             pendingPan = nil
             panBroughtCanvas = !inFront
@@ -1692,10 +1717,105 @@ final class CanvasController {
             if inFront, pendingPan == nil { view.trackpadPanEnded() }
             pendingPan = nil
             panBroughtCanvas = false
-        case .entryBegan, .entryProgress, .entryEnded:
-            // The entry orchestration lands next; until then the swipe does nothing.
-            break
+        case .entryBegan:
+            // Off, the swipe up is what it was: the whole See All flight, at the overview.
+            guard Settings.gestureEntry else {
+                Log.note("Entry: gesture entry off in Settings — the swipe is See All")
+                showCanvas(fitAll: true, seeAll: true)
+                return
+            }
+            guard addingWidgets == nil, !isSetupShowing else { return }   // the desktop is in edit mode; Done comes back
+            Log.note("Entry: four-finger swipe up begins\(inFront ? "" : ", bringing the canvas back")")
+            if inFront, let overview = view.overviewCamera, view.camera.isClose(to: overview) {
+                // Already looking at everything (a second swipe): fit again, no entry to drive.
+                view.fitAll(animated: true)
+                return
+            }
+            entryCameFromHidden = !inFront
+            if !inFront {
+                pendingPan = nil
+                pendingFitAll = false   // the swipe frames the pull-back itself; no fixed-timer fit behind it
+                panBroughtCanvas = true
+                show()
+            }
+            beginEntry()
+        case .entryProgress(let t):
+            driveEntry(t)
+        case .entryEnded:
+            endEntry()
         }
+    }
+
+    // MARK: Gesture entry (A1)
+
+    /// The fingers went down and started up: remember where the canvas is and where the pull-back ends.
+    /// Hold the start camera, so the first frame of the stroke shows exactly what was there before it.
+    private func beginEntry() {
+        guard let overview = view.overviewCamera else {
+            Log.note("Entry: nothing to fit — the swipe is a plain See All flight")
+            clearEntry()
+            showCanvas(fitAll: true, seeAll: true)
+            return
+        }
+        entryStart = view.camera
+        entryOverview = overview
+        entryPath = CameraPath(from: entryStart, to: overview, viewSize: view.bounds.size)
+        entrySamples = []
+        view.set(camera: entryStart)
+    }
+
+    /// The hand's progress along the stroke, 0 → 1: the camera follows it 1:1 (no spring, no timer — the
+    /// feel is the trackpad's own travel). Also sampled for the release's speed.
+    private func driveEntry(_ t: CGFloat) {
+        guard let path = entryPath else { return }
+        view.set(camera: path.camera(at: t))
+        entrySamples.append((progress: t, time: CACurrentMediaTime()))
+        if entrySamples.count > 5 { entrySamples.removeFirst(entrySamples.count - 5) }
+    }
+
+    /// The fingers lifted: all the way in or all the way back out, decided by how far the stroke got
+    /// (`EntryFlight.commitThreshold`) and carried on by the release spring, which may be re-aimed
+    /// mid-flight (`view.fly`). Reduce Motion: no spring, the destination at once.
+    private func endEntry() {
+        guard entryPath != nil else { return }
+        let t = entrySamples.last?.progress ?? 0
+        let commit = EntryFlight.committed(progress: t, threshold: EntryFlight.commitThreshold)
+        let target = commit ? entryOverview : entryStart
+        Log.note(String(format: "Entry: released at %.2f — %@", t, commit ? "in" : "back out"))
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            view.set(camera: target)
+            finishEntry(committed: commit)
+            return
+        }
+        view.fly(to: target, step: { [weak self] p in self?.driveEntryFlight(p) },
+                 completion: { [weak self] in self?.finishEntry(committed: commit) })
+    }
+
+    /// The flight step: what the cards do while the camera springs home (A2; `driveEntryFlight`).
+    private func driveEntryFlight(_ p: CGFloat) {}
+
+    /// The release landed (or Reduce Motion put it there): the entry is over.
+    private func finishEntry(committed: Bool) {
+        if !committed, entryCameFromHidden, !NSApp.isActive {
+            // The stroke came short from a window: the canvas was only up for the gesture.
+            mapDidHide()
+        }
+        clearEntry()
+    }
+
+    /// Something else took over (a click, a pan, a zoom, another flight): the camera goes to the overview
+    /// and the entry is dropped, so nothing is left half-driven.
+    private func cancelEntry() {
+        guard entryPath != nil else { return }
+        Log.note("Entry: interrupted")
+        if entryOverview != view.camera { view.set(camera: entryOverview) }
+        clearEntry()
+    }
+
+    private func clearEntry() {
+        entryPath = nil
+        entrySamples = []
+        entryCameFromHidden = false
     }
 
     // MARK: Show Desktop
@@ -3456,6 +3576,7 @@ final class CanvasController {
     /// widget's app, which is where a widget leads — unless it deep-links somewhere more specific, which
     /// Accessibility doesn't tell us. With takeover running, the app is absorbed like any other launch.
     func press(_ p: WindowProxy, at worldPoint: CGPoint?) {
+        cancelEntry()   // a click is a decision about the overview the entry was still pulling back to
         guard p.kind == .widget else { return }
         let widget = axWidget(for: p)
         if let worldPoint, let widget, widget.press(at: p.realPoint(forWorld: worldPoint)) {

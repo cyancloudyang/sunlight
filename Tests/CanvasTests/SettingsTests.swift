@@ -102,4 +102,35 @@ final class SettingsTests: XCTestCase {
             XCTAssertEqual(Settings.seeAllGesture, .swipeUp)
         }
     }
+
+    func testGestureEntryDefaultsOnAndRoundTrips() async {
+        await MainActor.run {
+            let defaults = UserDefaults.standard
+            let saved = defaults.object(forKey: "CanvasGestureEntry")
+            defer { defaults.set(saved, forKey: "CanvasGestureEntry") }
+            defaults.removeObject(forKey: "CanvasGestureEntry")
+            // Out of the box the swipe up drives the pull-back itself; off, entry is the plain See All flight.
+            XCTAssertTrue(Settings.gestureEntry)
+            Settings.gestureEntry = false
+            XCTAssertFalse(Settings.gestureEntry)
+            Settings.gestureEntry = true
+            XCTAssertTrue(Settings.gestureEntry)
+        }
+    }
+
+    func testGestureEntryPostsAChangeNotification() async {
+        await MainActor.run {
+            let defaults = UserDefaults.standard
+            let saved = defaults.object(forKey: "CanvasGestureEntry")
+            defer { defaults.set(saved, forKey: "CanvasGestureEntry") }
+            var posted = 0
+            let token = NotificationCenter.default.addObserver(forName: Settings.gestureEntryDidChange,
+                                                              object: nil, queue: nil) { _ in posted += 1 }
+            defer { NotificationCenter.default.removeObserver(token) }
+            Settings.gestureEntry = false
+            XCTAssertEqual(posted, 1)
+            Settings.gestureEntry = true
+            XCTAssertEqual(posted, 2)
+        }
+    }
 }

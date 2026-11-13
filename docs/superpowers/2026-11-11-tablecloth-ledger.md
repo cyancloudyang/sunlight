@@ -262,3 +262,15 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - 测试：新增 `Tests/CanvasTests/EntryFlightTests.swift` 9 项全绿（选择集、相机/inset 换算、零尺寸跳过、屏外空集、lerp 钳制、commit 边界、velocity 采样窗）。
 - 全量：`swift test` → **731 tests, 1 skipped, 0 failures**。
 - Ruling: 计划里 `testCardsFromOriginUsesTheCameraAndInset` 的期望值 `(90,80)` 是 `toScreen` 语义，与计划 Steps 3 的 `camera.toWorld(content.origin)`（亦为 `WindowProxy.worldRect` 与设计 Q1 的语义）矛盾 → 按 `toWorld` 实现，测试改为断言 `from == (130,140)` **并**追加 `cam.toScreen(from) == (110,110)`（t=0 无跳变），另加一条 zoom 0.5 相机用例 — `from` 的意义是「卡片要放在世界的哪一点，才能通过入场相机看起来仍在真实屏幕原位」，只有 toWorld 能满足；若按 toScreen 实现，t=0 卡片会整体位移 = 2×camera.origin — 代价：偏离计划文本的字面期望值（语义与设计文档一致）。
+
+### #28 Task 3 完成：手势驱动入场相机 A1 + 路由 + 可逆开关
+
+- `Settings.gestureEntry`（key `CanvasGestureEntry`，默认 true，`CanvasGestureEntryDidChange` 通知）。新增 2 条测试（默认值与往返、通知）——先看着 `type 'Settings' has no member 'gestureEntry'` 失败再实现。
+- `Desk.trackpadPan`：`.entryBegan/.entryProgress` → `(panning ?? pointed)`；`.entryEnded` 同路并清 `panning`（与 `.seeAll` 同一规则，整笔手势留在一块画布上）。
+- `CanvasController`：状态 `entryPath/entryStart/entryOverview/entrySamples/entryCameFromHidden`；`beginEntry()`（存起点相机、`view.overviewCamera`、`CameraPath(from:to:viewSize:)`、首帧 `set(camera: entryStart)` 保证手一落画面不动）、`driveEntry(_:)`（`path.camera(at: t)` 1:1 跟手 + 末 5 个采样）、`endEntry()`（`EntryFlight.committed` 0.5 阈值 + `EntryFlight.velocity`，Reduce Motion 直接 set，否则 `view.fly(to:step:completion:)`）、`driveEntryFlight`（Task 4 填）、`finishEntry(committed:)`（未提交且从隐藏来 → `mapDidHide()`）、`cancelEntry()`（中断时相机落到 overview）、`clearEntry()`。
+- 幂等 Q4：已在 `view.overviewCamera` 附近再上滑 → 只 `view.fitAll(animated: true)`，不起 entry 状态。
+- 中断口：`press(_:at:)`、四指 `.began`、`view.onAnimationCancelled` 都调 `cancelEntry()`。
+- 全量：`swift test` → **733 tests, 1 skipped, 0 failures**（skip 为既有 `DockItemTests.testTheAppsOwnBundleIsItsIcon`）。`swift build` 无新增 warning（`Desk.swift:376` 与 `PressTap` / `keyHoldLimit` 三条为既有基线）。
+- Ruling: 只把**已在前台**分支的 See All（`.seeAll` + `gestureEntry` 开）换成 `view.fly(to: overview)`；隐藏→show 的 `pendingFitAll` 三处消费点（:2485/:2501/:2659）仍走 `animateCamera` — 理由：那三处是窗口入场后的首次 fit，后面连着 listing 与首次同步，换驱动会扩大无关路径的改动面，而手势入场本身已覆盖「可重定向」需求 — 代价：从窗口四指上滑（tap 模式外的 See All 分支）仍固定 0.42s 不可重定向。
+- Ruling: `entryStart/entryOverview` 用 `Camera`（有默认 `init(origin:zoom:)`）而非 `Camera?`，与计划字面一致；`entryPath` 作为「是否在入场中」的唯一真值。
+- 待真机验收（未实测，不声称顺滑）：1:1 跟手是否无固定计时滞后；`entryDistance 0.30` 的行程是否合适；释放弹簧 response/damping 0.45/0.72 的手感；Reduce Motion 下是否为瞬切；从隐藏状态取消后画布是否正确退场。

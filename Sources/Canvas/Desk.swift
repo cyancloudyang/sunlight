@@ -225,9 +225,13 @@ final class Desk {
                 pointed.trackpadPan(phase)
             }
             panning = nil
-        case .entryBegan, .entryProgress, .entryEnded:
-            // Routing lands with the controller's entry orchestration; until then the swipe does nothing.
-            break
+        case .entryBegan, .entryProgress:
+            // The swipe began on a canvas (a panning one) or, with no pan under way, on the one under
+            // the pointer: the same rule as See All, so the stroke's whole life stays on one canvas.
+            (panning ?? pointed).trackpadPan(phase)
+        case .entryEnded:
+            (panning ?? pointed).trackpadPan(phase)
+            panning = nil
         case .spread:
             current.trackpadPan(phase)
         }
