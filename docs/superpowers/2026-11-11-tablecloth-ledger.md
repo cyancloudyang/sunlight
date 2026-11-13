@@ -284,3 +284,11 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - Ruling: 新增 `CanvasView.revealArrival(of:context:)`（3 行，转调既有 `beginEntrance`）—— 计划 Step 3 让复用 `view.setArrival`，但 `setArrival` 只对「正在开场」的 `entrances` 条目生效（内部 guard `opening`），对已有窗口 no-op，屏外卡根本无法淡入 — 代价：view 多一个极小入口（复用既有入场机制，未新增动画/绘制代码）。
 - Ruling: 帧坐标先 `toView` 再交给 `EntryFlight.cards`（相机传 `entryStart`），而不是传 `snapshot.camera` — 理由：listing 帧是全局点，`entryStart` 是视图相机；副屏 `display.origin ≠ 0` 时混用会把 `from` 整体偏移一个显示器原点 — 代价：多一次逐帧平移，主屏上等价。
 - 待真机验收（未实测）：卡是否真从真实堆叠位起飞（无分裂感）、与相机同步落位、屏外卡原地淡入是否过亮/抢眼、最小化窗口恢复后的位置是否仍为 stored、live 模式（realWindows）下卡飞行是否跟手。
+
+### #28 Part A 完成（交接节点，TDD 四任务全绿，待真机验收）
+
+- commit 链（`origin/tablecloth`，起点 `87fd379`）：`b88a9af` Task 1 识别器入场相位 → `bda5cde` Task 2 纯模型 EntryFlight → `e80f82c` Task 3 手势驱动入场相机 A1 + 路由 + 开关 → `dd13f8f` Task 4 逐卡飞行 A2（本节点随后的 docs 提交）。
+- 验证（HEAD 上刚跑）：`swift build` → Build complete；`swift test` → **733 tests, 1 skipped, 0 failures**（skip 为既有 `DockItemTests.testTheAppsOwnBundleIsItsIcon`，runner 无 app bundle）。计划 4 个任务的 Step 复选框已全部勾选。
+- 全部 Rulings（摘要；详文见各任务节）：计划测试期望值 `(90,80)` → 按 `toWorld` 语义为 `(130,140)` 并补 `toScreen` 回环断言；Task 1 期间 Desk/Controller 只加 inert 占位；See All 只在已在前台分支改走 `fly`、`pendingFitAll` 三处消费点保持 `animateCamera`；`entryStart/entryOverview` 用 `Camera` 而非 `Camera?`；新增 `CanvasView.revealArrival`（`setArrival` 对非开场窗口 no-op）；飞行集帧先 `toView` 再进 `EntryFlight.cards`（副屏原点）。
+- 待用户真机验收（**均未实测，不声称顺滑**）：① 上滑是否 1:1 跟手、无固定计时滞后；② 可见窗口是否真从真实堆叠位起飞、与相机同一 t 落位（无分裂感）；③ 释放弹簧手感（response/damping 0.45/0.72）；④ 不到 0.5 阈值是否干净回退（含从隐藏状态退场）；⑤ 屏外／最小化窗口原地淡入是否过亮；⑥ live 模式 realWindows 下的跟手；⑦ 占用（PerfLog，**无实测数字**）。可调项：`entryDistance 0.30`、`commitThreshold 0.5`、采样窗 5、spring 0.45/0.72。
+- 边界：未 push upstream，PR #1 保持 draft，未合并；Part B（dwell-to-zoom）未动；无 SIP／系统偏好／常驻流改动；ad-hoc 重签后需重新授予 Accessibility + Screen Recording。
