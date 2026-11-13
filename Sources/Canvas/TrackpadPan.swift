@@ -24,9 +24,14 @@ final class TrackpadPan: @unchecked Sendable {
         /// Finger travel since the last update, in trackpad widths, y down. The content follows it.
         case changed(CGVector)
         case ended
-        /// A four-finger tap, as the fingers lift; or a swipe up, mid-drag, after which the pan is over
-        /// with no `ended` to follow.
+        /// A four-finger tap, as the fingers lift: See All, in tap mode only.
         case seeAll
+        /// Swipe-up entry recognized: the canvas comes up and the pull-back follows the finger.
+        case entryBegan
+        /// Swipe-up entry progress t∈[0,1], each frame after entryBegan until the fingers lift.
+        case entryProgress(CGFloat)
+        /// The entry swipe's fingers lifted; the controller commits or cancels from the last progress.
+        case entryEnded
         /// The four fingers spread apart (Show Desktop), once per touch. No pan comes with it.
         case spread
     }
@@ -45,6 +50,10 @@ final class TrackpadPan: @unchecked Sendable {
     /// Centroid rise, in trackpad widths, that makes an upward drag a swipe up. About two centimetres on
     /// a built-in trackpad: a short stroke, not a shifting hand.
     fileprivate static let swipeDistance: CGFloat = 0.12
+    /// Further centroid rise, in trackpad widths, that takes the entry from just begun (t=0) to all the
+    /// way in (t=1). About four centimetres on a built-in trackpad: the pull-back follows the hand over a
+    /// stroke a hand actually makes. Tunable on the real device.
+    fileprivate static let entryDistance: CGFloat = 0.30
     /// A tap is over, the first finger lifting, within this long of the first one landing. A hand
     /// that rests on the trackpad longer is resting.
     fileprivate static let tapDuration: CFAbsoluteTime = 0.3
@@ -285,6 +294,8 @@ struct TrackpadRecognizer {
     var dragOrigin: CGPoint?
     /// The spread has fired; the rest of the touch does nothing.
     var swiped = false
+    /// A swipe up has opened the canvas's entry: progress is under way until the fingers lift.
+    var entryActive = false
 
     enum Lock { case level, plumb }
     /// When the first finger of this touch landed; nil with no finger down.
@@ -350,14 +361,22 @@ struct TrackpadRecognizer {
             phases.append(.began)
         }
         if swipeUpSeesAll, let origin = dragOrigin, landedTogether {
-            // Any upward swipe is See All, however slow: the whole travel so far, straight up and far
-            // enough, makes one. The pan it interrupts has moved the canvas a little; See All goes on.
+            // Any upward swipe opens the canvas, however slow: the whole travel so far, straight up and
+            // far enough, begins the entry. Progress is measured from the recognition threshold, so the
+            // canvas starts at the camera it was on (no jump) and the rest of the stroke drives the
+            // pull-back; the finger coming back down scrubs it out again. The pan it interrupts has moved
+            // the canvas a little; entry goes on from there.
             let rise = centroid.y - origin.y   // the centroid's y goes up the trackpad
             let run = abs(centroid.x - origin.x)
-            if rise >= TrackpadPan.swipeDistance, atan2(rise, run) >= .pi / 2 - TrackpadPan.axisLock {
-                swiped = true
-                last = nil   // the pan is over here; lifting the fingers won't `end` it again
-                return phases + [.seeAll]
+            let recognized = rise >= TrackpadPan.swipeDistance
+                && atan2(rise, run) >= .pi / 2 - TrackpadPan.axisLock
+            if recognized || entryActive {
+                let span = TrackpadPan.entryDistance - TrackpadPan.swipeDistance
+                let t = min(max((rise - TrackpadPan.swipeDistance) / span, 0), 1)
+                let first = !entryActive
+                entryActive = true
+                last = centroid   // the pan is over here; lifting the fingers won't `end` it again
+                return phases + (first ? [.entryBegan, .entryProgress(t)] : [.entryProgress(t)])
             }
         }
         switch lock {
@@ -371,7 +390,8 @@ struct TrackpadRecognizer {
     }
 
     mutating func reset() -> [TrackpadPan.Phase] {
-        let phases: [TrackpadPan.Phase] = last == nil ? [] : [.ended]
+        // An entry's fingers lifting ends the entry, not a pan (entryActive implies last != nil).
+        let phases: [TrackpadPan.Phase] = entryActive ? [.entryEnded] : (last == nil ? [] : [.ended])
         device = nil
         fingers = []
         anchor = nil
@@ -380,6 +400,7 @@ struct TrackpadRecognizer {
         stirred = false
         dragOrigin = nil
         swiped = false
+        entryActive = false
         landedTogether = false
         anchorSpread = 0
         return phases

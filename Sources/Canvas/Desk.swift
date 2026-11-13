@@ -225,6 +225,9 @@ final class Desk {
                 pointed.trackpadPan(phase)
             }
             panning = nil
+        case .entryBegan, .entryProgress, .entryEnded:
+            // Routing lands with the controller's entry orchestration; until then the swipe does nothing.
+            break
         case .spread:
             current.trackpadPan(phase)
         }

@@ -1692,6 +1692,9 @@ final class CanvasController {
             if inFront, pendingPan == nil { view.trackpadPanEnded() }
             pendingPan = nil
             panBroughtCanvas = false
+        case .entryBegan, .entryProgress, .entryEnded:
+            // The entry orchestration lands next; until then the swipe does nothing.
+            break
         }
     }
 

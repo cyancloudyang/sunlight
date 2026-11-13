@@ -242,3 +242,16 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - 下一步：invoke writing-plans 出 A 部分实现计划（docs/superpowers/plans/），TDD 逐项 RED→GREEN→全套件；每关键节点 commit+push origin（cyancloudyang/sunlight）tablecloth，绝不 push upstream。PR #1 保持 draft 直到用户验收。
 - 硬约束沿用（逐条生效）：不关 SIP/不注入系统进程/低占用/零常驻流/私有 API 仅可选有公开兜底（MultitouchSupport 既有）/不改系统偏好不做登录项/许可证边界/只 push origin。
 - 仍未验收（真机）：#26/#25/#23/#24 及第五/六轮遗留；空间相机 A/B 待实施后真机验收。一律不虚构数字、不宣称达标。#20 真机测量仍暂停。
+
+## 空间相机 Part A 实施（2026-11-13，#28，TDD）
+
+按已批准计划 `docs/superpowers/plans/2026-11-12-spatial-camera-entry.md` 逐任务执行；起点 `origin/tablecloth = 87fd379`（fetch 后未前移，工作树干净）。每个任务 RED（看着失败）→GREEN→全量 `swift test`→本 ledger→commit→push origin。
+
+### #28 Task 1 完成：识别器入场进度相位（TrackpadPan）
+
+- 内容：`TrackpadPan.Phase` 增 `.entryBegan/.entryProgress(CGFloat)/.entryEnded`；新常量 `entryDistance=0.30`（可调）；识别器新状态 `entryActive`。swipeUp 模式下上滑不再发一次性 `.seeAll`：达 `swipeDistance`(0.12) 起 `.entryBegan` + 首个 `.entryProgress(0)`，其后每帧按 `(rise−swipeDistance)/(entryDistance−swipeDistance)` 发进度（钳制 [0,1]，回拉可 scrub 回 0）；`reset()` 在 entry 活动时发 `.entryEnded`（取代 `.ended`）。tap 模式 `.seeAll`、普通 pan、spread 均不变。
+- 测试：`Test`/`TrackpadRecognizerTests` 22 项全绿（原三条 seeAll 断言替换为 4 条 entry 断言，tap/水平/对角三条加 `!entryBegan` 断言）。
+- 全量：`swift test` → **722 tests, 1 skipped, 0 failures**（skip 为 `DockItemTests.testTheAppsOwnBundleIsItsIcon`，runner 无 app bundle）。
+- Ruling: 计划里 `TrackpadRecognizerTests` 的 `XCTAssertEqual(ts.first, 0, accuracy:)` 不能编译（`CGFloat?` 非 `Double`）→ 改为 `ts.first ?? -1` — 计划文本的机械笔误，语义不变 — 代价：无。
+- Ruling: Task 1 只改识别器时 `Desk.trackpadPan` / `CanvasController.trackpadPan` 的 phase 穷尽 switch 编译失败 → 本任务先加 inert `case .entryBegan, .entryProgress, .entryEnded: break` 占位，路由与编排按计划在 Task 3 落地 — 保持任务粒度（Task 1 只碰识别器+其测试）且编译必须通过 — 代价：Task 1 与 Task 3 之间上滑入场在 app 内 inert（计划 Notes 已预期），此时上滑不再 See All。
+- 待真机验收：`entryDistance` 0.30 与起算点（0.12→0.30 区间）的实际跟手行程需真机确认，未调未测。

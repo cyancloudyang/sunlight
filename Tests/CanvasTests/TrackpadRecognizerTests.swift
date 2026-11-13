@@ -89,27 +89,38 @@ final class TrackpadRecognizerTests: XCTestCase {
 
     // MARK: Swipe up (Settings › Trackpad)
 
-    func testWithSwipeUpChosenAQuickStrokeUpIsSeeAllAndEndsThePan() {
+    func testWithSwipeUpChosenAQuickStrokeUpBeginsEntryAndEndsIt() {
         let phases = touch(line(from: CGPoint(x: 0.5, y: 0.2), to: CGPoint(x: 0.51, y: 0.5)), swipeUp: true)
         XCTAssertEqual(phases.first, .began)
-        XCTAssertEqual(phases.last, .seeAll)
-        XCTAssertEqual(phases.filter { $0 == .seeAll }.count, 1)
+        XCTAssertEqual(phases.last, .entryEnded)
+        XCTAssertEqual(phases.filter { $0 == .entryBegan }.count, 1)
+        XCTAssertFalse(phases.contains(.seeAll))
         XCTAssertFalse(phases.contains(.ended))
+        XCTAssertTrue(phases.contains { if case .entryProgress = $0 { true } else { false } })
     }
 
-    func testWithSwipeUpChosenASlowSwipeUpIsAlsoSeeAll() {
+    func testWithSwipeUpChosenASlowSwipeUpStillBeginsEntry() {
         // Three seconds, far slower than a flick: a deliberate swipe up still opens the whole canvas.
         let phases = touch(line(from: CGPoint(x: 0.5, y: 0.1), to: CGPoint(x: 0.5, y: 0.8), steps: 30), interval: 0.1, swipeUp: true)
-        XCTAssertEqual(phases.first, .began)
-        XCTAssertEqual(phases.last, .seeAll)
-        XCTAssertEqual(phases.filter { $0 == .seeAll }.count, 1)
-        XCTAssertFalse(phases.contains(.ended))
+        XCTAssertEqual(phases.filter { $0 == .entryBegan }.count, 1)
+        XCTAssertEqual(phases.last, .entryEnded)
     }
 
-    func testWithSwipeUpChosenAnUpwardSwipeBecomesSeeAllWheneverItGathers() {
-        let slow = line(from: CGPoint(x: 0.5, y: 0.2), to: CGPoint(x: 0.5, y: 0.25), steps: 6)
-        let fast = line(from: CGPoint(x: 0.5, y: 0.25), to: CGPoint(x: 0.5, y: 0.6), steps: 6)
-        XCTAssertTrue(touch(slow + fast, interval: 0.1, swipeUp: true).contains(.seeAll))
+    func testEntryProgressRisesFromZeroToOneAndClamps() {
+        // dragOrigin y=0.2; recognition at rise 0.12 (t=0); full at rise 0.30 (t=1); past stays 1.
+        let phases = touch(line(from: CGPoint(x: 0.5, y: 0.2), to: CGPoint(x: 0.5, y: 0.6), steps: 20), swipeUp: true)
+        let ts = phases.compactMap { if case .entryProgress(let t) = $0 { t } else { nil } }
+        XCTAssertEqual(ts.first ?? -1, 0, accuracy: 0.001)   // (unwrap: the plan's literal takes a CGFloat?)
+        XCTAssertEqual(ts.last ?? -1, 1, accuracy: 0.001)
+        XCTAssertTrue(zip(ts, ts.dropFirst()).allSatisfy { $0 <= $1 + 0.001 })  // monotonic up
+        XCTAssertTrue(ts.allSatisfy { $0 >= 0 && $0 <= 1 })
+    }
+
+    func testEntryProgressScrubsBackWhenTheFingerReturns() {
+        let up = line(from: CGPoint(x: 0.5, y: 0.2), to: CGPoint(x: 0.5, y: 0.45), steps: 10)
+        let down = line(from: CGPoint(x: 0.5, y: 0.45), to: CGPoint(x: 0.5, y: 0.25), steps: 10)
+        let ts = touch(up + down, swipeUp: true).compactMap { if case .entryProgress(let t) = $0 { t } else { nil } }
+        XCTAssertGreaterThan(ts.max() ?? 0, ts.last ?? 1)  // came back down
     }
 
     func testWithSwipeUpChosenATapDoesNothing() {
@@ -120,6 +131,7 @@ final class TrackpadRecognizerTests: XCTestCase {
         phases += r.update(device: 1, fingers: four, centroid: CGPoint(x: 0.5, y: 0.5), now: 0.1)
         phases += r.update(device: 1, fingers: [], centroid: .zero, now: 0.12)
         XCTAssertEqual(phases, [])
+        XCTAssertFalse(phases.contains(.entryBegan))
     }
 
     func testWithSwipeUpChosenAHorizontalDragStillPans() {
@@ -127,12 +139,14 @@ final class TrackpadRecognizerTests: XCTestCase {
         XCTAssertEqual(phases.first, .began)
         XCTAssertEqual(phases.last, .ended)
         XCTAssertFalse(phases.contains(.seeAll))
+        XCTAssertFalse(phases.contains(.entryBegan))
     }
 
     func testWithSwipeUpChosenADiagonalDragStillPans() {
         let phases = touch(line(from: CGPoint(x: 0.2, y: 0.2), to: CGPoint(x: 0.5, y: 0.5)), swipeUp: true)
         XCTAssertEqual(phases.first, .began)
         XCTAssertFalse(phases.contains(.seeAll))
+        XCTAssertFalse(phases.contains(.entryBegan))
     }
 
     // MARK: Drag
