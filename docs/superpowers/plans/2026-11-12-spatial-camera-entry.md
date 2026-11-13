@@ -63,7 +63,7 @@ No new view code: A1/A2 reuse `CanvasView.set(camera:)`, `fly(to:rho:step:comple
 - Consumes: existing `TrackpadRecognizer.update(device:fingers:centroid:spread:now:) -> [TrackpadPan.Phase]`, `swipeUpSeesAll`, `dragOrigin`, `landedTogether`, constants `swipeDistance` (0.12), `axisLock`.
 - Produces: `TrackpadPan.Phase.entryBegan`, `.entryProgress(CGFloat)`, `.entryEnded` (Sendable, Equatable). In swipeUp mode an upward swipe emits `.entryBegan` once, then `.entryProgress(t)` per frame (`t∈[0,1]`), then `.entryEnded` on lift. Tap mode `.seeAll` and horizontal/diagonal/down pan unchanged. New constant `TrackpadPan.entryDistance: CGFloat = 0.30` (tunable). New recognizer state `entryActive: Bool`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `TrackpadRecognizerTests.swift`, replace the three swipe-up `.seeAll` assertions (tests at :92, :100, :109) and add new ones. Keep the `touch(_:interval:swipeUp:)` helper. The swipe-up tests become:
 
@@ -104,12 +104,12 @@ func testEntryProgressScrubsBackWhenTheFingerReturns() {
 
 Keep `testWithSwipeUpChosenATapDoesNothing`, `...HorizontalDragStillPans`, `...DiagonalDragStillPans` but change their `XCTAssertFalse(phases.contains(.seeAll))` to also assert `!phases.contains(.entryBegan)`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `swift test --filter TrackpadRecognizerTests 2>&1 | tail -30`
 Expected: FAIL — `type 'TrackpadPan.Phase' has no member 'entryBegan'` (compile error), so the new tests cannot pass.
 
-- [ ] **Step 3: Add the entry phases and recognizer logic**
+- [x] **Step 3: Add the entry phases and recognizer logic**
 
 In `TrackpadPan.Phase` add (keep `.seeAll` for tap mode):
 ```swift
@@ -146,12 +146,12 @@ entryActive = false
 ```
 The lift guard (:310-314) already calls `reset()`; in swipeUp mode its `tap` is false, so lift yields `[.entryEnded]`. Do not change tap mode or the pan path.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `swift test --filter TrackpadRecognizerTests 2>&1 | tail -30`
 Expected: PASS, all TrackpadRecognizerTests green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/Canvas/TrackpadPan.swift Tests/CanvasTests/TrackpadRecognizerTests.swift
@@ -176,7 +176,7 @@ git commit -m "feat: swipe-up emits continuous entry progress instead of discret
   - `static func velocity(_ samples: [(progress: CGFloat, time: CFTimeInterval)]) -> CGFloat`
   - `static let commitThreshold: CGFloat = 0.5` (tunable)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `EntryFlightTests.swift` (`import XCTest`, `@testable import Canvas`, `import CoreGraphics`). Build a `FrameSnapshot(frames:camera:)` with a 1:1 camera (`Camera(origin: .zero, zoom: 1)`) so world==screen.
 
@@ -231,12 +231,12 @@ func testVelocityIsProgressPerSecondFromTheLastSamples() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `swift test --filter EntryFlightTests 2>&1 | tail -30`
 Expected: FAIL — `cannot find 'EntryFlight' in scope`.
 
-- [ ] **Step 3: Implement EntryFlight**
+- [x] **Step 3: Implement EntryFlight**
 
 Create `Sources/Canvas/EntryFlight.swift` (`import CoreGraphics`). A pure enum/struct namespace; no AppKit. Signatures exactly as in Interfaces. Bodies:
 - `cards`: for each `id` where `snapshot[id]` exists, `FrameSnapshot.hasSize(frame)`, and `stored[id]` exists: `let inset = insets[id] ?? 0; let content = frame.insetBy(dx: inset, dy: inset); from = camera.toWorld(content.origin); to = stored[id]!.origin`. Skip ids missing either side. (Mirrors `WindowProxy.worldRect(forReal:inset:camera:)` origin math; size is constant so only origins are carried.)
@@ -245,12 +245,12 @@ Create `Sources/Canvas/EntryFlight.swift` (`import CoreGraphics`). A pure enum/s
 - `velocity`: guard ≥2 samples; take the last up-to-3, `(last.progress - first.progress) / max(last.time - first.time, 1e-3)`; empty/single → 0.
 - `commitThreshold = 0.5`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `swift test --filter EntryFlightTests 2>&1 | tail -30`
 Expected: PASS, all EntryFlightTests green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/Canvas/EntryFlight.swift Tests/CanvasTests/EntryFlightTests.swift
@@ -269,7 +269,7 @@ git commit -m "feat: pure EntryFlight model (flight set, clamped origin lerp, co
 - Consumes: Task 1 `.entryBegan/.entryProgress/.entryEnded`; Task 2 `EntryFlight.commitThreshold`/`committed`/`velocity`; existing `CameraPath(from:to:viewSize:)`, `view.set(camera:)`, `view.fly(to:rho:step:completion:)`, `view.overviewCamera`, `snapshot(at:)`, `view.camera`, `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`.
 - Produces: `Settings.gestureEntry: Bool` (get/set, key `CanvasGestureEntry`, default true, notification `gestureEntryDidChange`). Controller entry state: `entryPath: CameraPath?`, `entryStart: Camera`, `entryOverview: Camera`, `entrySamples: [(progress: CGFloat, time: CFTimeInterval)]`, `entryCameFromHidden: Bool`. New private methods `beginEntry()`, `driveEntry(_ t: CGFloat)`, `endEntry()`, `cancelEntry()`, `clearEntry()`.
 
-- [ ] **Step 1: Write the failing test (Settings gate)**
+- [x] **Step 1: Write the failing test (Settings gate)**
 
 In `SettingsTests.swift` add (mirror the existing `testSeeAllGestureDefaultsToSwipeUpAndRoundTrips` save/restore pattern):
 ```swift
@@ -288,21 +288,21 @@ func testGestureEntryDefaultsOnAndRoundTrips() async {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `swift test --filter SettingsTests 2>&1 | tail -20`
 Expected: FAIL — `type 'Settings' has no member 'gestureEntry'`.
 
-- [ ] **Step 3: Implement the Settings gate**
+- [x] **Step 3: Implement the Settings gate**
 
 In `Settings.swift` add `static let gestureEntryKey = "CanvasGestureEntry"`, `static let gestureEntryDidChange = Notification.Name("CanvasGestureEntryDidChange")`, and a `static var gestureEntry: Bool` get/set mirroring `seeAllGesture` (:266) but defaulting `true` (`defaults.object(forKey:) == nil ? true : defaults.bool(forKey:)`), posting the notification on set. Doc comment: "Swipe-up drives the pull-back and cards fly from their real places; off, entry is the plain See All flight."
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter SettingsTests 2>&1 | tail -20`
 Expected: PASS.
 
-- [ ] **Step 5: Route the entry phases (Desk)**
+- [x] **Step 5: Route the entry phases (Desk)**
 
 In `Desk.trackpadPan` (:207) add cases routing like `.seeAll` to the panning canvas (the swipe began on it), clearing `panning` on end:
 ```swift
@@ -313,7 +313,7 @@ case .entryEnded:
     panning = nil
 ```
 
-- [ ] **Step 6: Wire the controller entry orchestration (A1 camera)**
+- [x] **Step 6: Wire the controller entry orchestration (A1 camera)**
 
 In `CanvasController.trackpadPan` add cases (gate on `Settings.gestureEntry`; when off, fall through to the existing `.seeAll`-style `showCanvas(fitAll:true, seeAll:true)` so the gate is a true fallback):
 - `.entryBegan`: if `!Settings.gestureEntry` → `showCanvas(fitAll:true, seeAll:true)`; return. Else record `entryCameFromHidden = !NSApp.isActive`; bring the canvas forward if hidden (`show()`); `beginEntry()`.
@@ -332,12 +332,12 @@ Idempotent (Q4): in `.entryBegan`, if `view.camera.isClose(to: view.overviewCame
 
 Non-gesture entry (A1.4): the existing `.seeAll` (tap) and hotkey/menu `showCanvas(fitAll:true)` path — change `view.fitAll(animated:true)`'s call site for See All to `view.fly(to: overview)` when `Settings.gestureEntry` (retargetable spring), keeping `animateCamera` when the gate is off. (Locate the `fitAll(animated:true)` See All call in `showCanvas` :1468 and the first-sync hooks; route through `fly`.)
 
-- [ ] **Step 7: Build + full suite**
+- [x] **Step 7: Build + full suite**
 
 Run: `swift build 2>&1 | tail -20` then `swift test 2>&1 | tail -25`
 Expected: build succeeds, no new warnings; full suite green (TrackpadRecognizerTests + EntryFlightTests + SettingsTests + all existing). The gesture-driven camera feel is glue — verified on real device, not unit-tested (convention).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add Sources/Canvas/Settings.swift Sources/Canvas/Desk.swift Sources/Canvas/CanvasController.swift Tests/CanvasTests/SettingsTests.swift
@@ -356,32 +356,32 @@ git commit -m "feat: gesture-driven entry camera with reversible gate and spring
 - Consumes: Task 2 `EntryFlight.cards(snapshot:stored:insets:camera:)` / `.origin(_:at:)`; Task 3 entry state + `beginEntry`/`driveEntry`/`endEntry`; `snapshot(at:)`, `proxies` (`worldRect`, `inset`, `windowID`, `kind`, `pip`, `standsAlone`), `WindowProxy.place(at:)`, `view.setArrival(of:context:neighbour:)`, `Handoff.flightRect`.
 - Produces: controller `entryCards: [(proxy: WindowProxy, card: EntryFlight.Card)]`; filled `driveEntryFlight(_ p: CGFloat)`; flight-set capture in `beginEntry`; off-screen fade; interrupt finalize.
 
-- [ ] **Step 1: Capture the flight set in beginEntry**
+- [x] **Step 1: Capture the flight set in beginEntry**
 
 After `entryPath` is set in `beginEntry()`: `let snap = snapshot(at: entryStart)` (fresh real frames, Q1); build `stored = Dictionary(uniqueKeysWithValues: proxies.values.filter { $0.kind == .window }.map { ($0.windowID, $0.worldRect) })` and `insets = ...map { ($0.windowID, $0.inset) }`; `let cards = EntryFlight.cards(snapshot: snap, stored: stored, insets: insets, camera: entryStart)`; `entryCards = cards.compactMap { (id, card) in proxies[id].map { (proxy: $0, card: card) } }`. For each flying card, place it at its `from` origin now (`proxy.place(at: card.from)`) so t=0 shows the real stacked position (Q3). PiP (`pip != nil`) and widgets are excluded by `kind == .window` + the snapshot intersection; attached children ride automatically via `worldRect.didSet` (Q7).
 
-- [ ] **Step 2: Drive the cards during the gesture**
+- [x] **Step 2: Drive the cards during the gesture**
 
 In `driveEntry(t)` (Task 3), after setting the camera: `for (proxy, card) in entryCards { proxy.place(at: EntryFlight.origin(card, at: t)) }`. Cards whose proxy is gone are skipped (entryCards holds strong refs; if a window closed, its proxy may be removed from `proxies` — guard `proxies[proxy.windowID] != nil` before placing, Review Focus 2).
 
-- [ ] **Step 3: Off-screen cards fade in at their stored place**
+- [x] **Step 3: Off-screen cards fade in at their stored place**
 
 For windows with a stored place but NOT in the flight set (off-screen/minimized at entry): `view.setArrival(of: proxy, context: WindowEffect.Context(source: nil))` so they fade in at their stored place rather than fly (Q3, reuse the existing opening effect). Do this once in `beginEntry` for `proxies.values.filter { $0.kind == .window && $0.pip == nil && cards[$0.windowID] == nil }`.
 
-- [ ] **Step 4: Re-base cards on release and ride the spring**
+- [x] **Step 4: Re-base cards on release and ride the spring**
 
 Fill `driveEntryFlight(_ p: CGFloat)` (the `fly` step stub from Task 3): the cards' `from` was re-based at release to their current origin and `to` is stored (commit) or the original real `from` (cancel). Implement by storing `entryReleaseCards: [(proxy, from: CGPoint, to: CGPoint)]` computed in `endEntry()` before calling `fly`: for each entryCard, `from = proxy.worldRect.origin`, `to = commit ? card.to : card.from`. Then `driveEntryFlight(p)` places each at `EntryFlight.origin(Card(from:to:), at: p)` (clamped, so the camera's ~4% overshoot never breathes a card past its end — Q6). `finishEntry(committed:)` places each card exactly at its `to` and clears `entryCards`/`entryReleaseCards`.
 
-- [ ] **Step 5: Interrupt finalize**
+- [x] **Step 5: Interrupt finalize**
 
 Ensure any interrupt during entry (manual pan/zoom/click, or `view.onAnimationCancelled`) places every entryCard at its committed target (`card.to`) and clears entry state, so no card is stuck mid-air (Review Focus 4). Reuse `interruptMotion()` for the camera; the card finalize is the controller's `clearEntry()` extended to place cards at `card.to` first.
 
-- [ ] **Step 6: Build + full suite**
+- [x] **Step 6: Build + full suite**
 
 Run: `swift build 2>&1 | tail -20` then `swift test 2>&1 | tail -25`
 Expected: build succeeds, no new warnings; full suite green. Per-card fly feel (no 分裂感, minimal motion, cards land with the camera) is glue — real-device verified, not unit-tested.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Sources/Canvas/CanvasController.swift

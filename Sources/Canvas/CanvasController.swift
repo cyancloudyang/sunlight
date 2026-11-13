@@ -294,6 +294,12 @@ final class CanvasController {
     private var entrySamples: [(progress: CGFloat, time: CFTimeInterval)] = []
     /// The canvas was off the screen when the swipe began: a release short of the threshold puts it away again.
     private var entryCameFromHidden = false
+    /// The cards that fly on this entry: each window on screen with a place on the canvas, and the two
+    /// origins it travels between (where it really is, where the canvas keeps it).
+    private var entryCards: [(proxy: WindowProxy, card: EntryFlight.Card)] = []
+    /// The same cards after release, re-based on where the gesture left them: the spring carries them the
+    /// rest of the way, so letting go at 40 % doesn't snap back to the start of their own flight.
+    private var entryReleaseCards: [(proxy: WindowProxy, from: CGPoint, to: CGPoint)] = []
     /// The four-finger drag under way began from a window, so the canvas is in front because of it.
     private var panBroughtCanvas = false
 
@@ -1762,6 +1768,33 @@ final class CanvasController {
         entryPath = CameraPath(from: entryStart, to: overview, viewSize: view.bounds.size)
         entrySamples = []
         view.set(camera: entryStart)
+        beginEntryCards()
+    }
+
+    /// Which cards fly, and where they start (A2). The frames are read now, against the camera the entry
+    /// starts from: a window's real place is only meaningful through the camera it was read with
+    /// (`FrameSnapshot`). Each flying card is put where its real window looks like it is, so the first
+    /// frame of the stroke shows the stacked desktop as it was — nothing jumps before the hand moves (Q3).
+    private func beginEntryCards() {
+        let reading = snapshot(at: entryStart)
+        var frames: [CGWindowID: CGRect] = [:]
+        for (id, frame) in reading.frames { frames[id] = toView(frame) }   // the listing is global; the camera is the view's
+        var stored: [CGWindowID: CGRect] = [:]
+        var insets: [CGWindowID: CGFloat] = [:]
+        for p in proxies.values where p.kind == .window {
+            stored[p.windowID] = p.worldRect
+            insets[p.windowID] = p.inset
+        }
+        let cards = EntryFlight.cards(snapshot: FrameSnapshot(frames: frames, camera: entryStart, time: reading.time),
+                                      stored: stored, insets: insets, camera: entryStart)
+        entryCards = cards.compactMap { id, card in proxies[id].map { (proxy: $0, card: card) } }
+        for c in entryCards { c.proxy.place(at: c.card.from) }
+        // A window the canvas knows but the screen doesn't (minimised, another Space, closed behind the
+        // canvas) has nowhere real to come from: it opens where the canvas keeps it instead of flying.
+        let offScreen = proxies.values.filter { $0.kind == .window && $0.pip == nil
+            && stored[$0.windowID] != nil && cards[$0.windowID] == nil }
+        for p in offScreen { view.revealArrival(of: p, context: WindowEffect.Context()) }
+        Log.note("Entry: \(entryCards.count) cards fly, \(offScreen.count) open in place")
     }
 
     /// The hand's progress along the stroke, 0 → 1: the camera follows it 1:1 (no spring, no timer — the
@@ -1769,6 +1802,10 @@ final class CanvasController {
     private func driveEntry(_ t: CGFloat) {
         guard let path = entryPath else { return }
         view.set(camera: path.camera(at: t))
+        // The cards ride the same t as the camera: one progress, so they can't come apart mid-stroke.
+        for c in entryCards where proxies[c.proxy.windowID] != nil {
+            c.proxy.place(at: EntryFlight.origin(c.card, at: t))
+        }
         entrySamples.append((progress: t, time: CACurrentMediaTime()))
         if entrySamples.count > 5 { entrySamples.removeFirst(entrySamples.count - 5) }
     }
@@ -1781,6 +1818,10 @@ final class CanvasController {
         let t = entrySamples.last?.progress ?? 0
         let commit = EntryFlight.committed(progress: t, threshold: EntryFlight.commitThreshold)
         let target = commit ? entryOverview : entryStart
+        // From here the cards fly from where the hand left them: in, to the canvas's own place; out, back
+        // to where the real window still is.
+        entryReleaseCards = entryCards.map { (proxy: $0.proxy, from: $0.proxy.worldRect.origin,
+                                              to: commit ? $0.card.to : $0.card.from) }
         Log.note(String(format: "Entry: released at %.2f — %@", t, commit ? "in" : "back out"))
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             view.set(camera: target)
@@ -1791,8 +1832,13 @@ final class CanvasController {
                  completion: { [weak self] in self?.finishEntry(committed: commit) })
     }
 
-    /// The flight step: what the cards do while the camera springs home (A2; `driveEntryFlight`).
-    private func driveEntryFlight(_ p: CGFloat) {}
+    /// The flight step: the cards ride the release spring's progress, clamped, so the camera's few per
+    /// cent of overshoot never breathes a card past its own end (Q6 — the camera may overshoot, cards land).
+    private func driveEntryFlight(_ p: CGFloat) {
+        for c in entryReleaseCards where proxies[c.proxy.windowID] != nil {
+            c.proxy.place(at: EntryFlight.origin(EntryFlight.Card(from: c.from, to: c.to), at: p))
+        }
+    }
 
     /// The release landed (or Reduce Motion put it there): the entry is over.
     private func finishEntry(committed: Bool) {
@@ -1812,7 +1858,15 @@ final class CanvasController {
         clearEntry()
     }
 
+    /// Ends the entry and leaves nothing in mid-air: every card goes to where it was released towards
+    /// (interrupted mid-stroke, before any release re-based it: its place on the canvas).
     private func clearEntry() {
+        for c in entryReleaseCards where proxies[c.proxy.windowID] != nil { c.proxy.place(at: c.to) }
+        if entryReleaseCards.isEmpty {
+            for c in entryCards where proxies[c.proxy.windowID] != nil { c.proxy.place(at: c.card.to) }
+        }
+        entryCards = []
+        entryReleaseCards = []
         entryPath = nil
         entrySamples = []
         entryCameFromHidden = false

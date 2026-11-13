@@ -1522,6 +1522,12 @@ final class CanvasView: NSView {
         }
     }
 
+    /// A window already on the canvas opens again where the canvas keeps it — no flight, no move: the
+    /// gesture entry's windows that had no real place to come from (minimised, another Space).
+    func revealArrival(of proxy: WindowProxy, context: WindowEffect.Context) {
+        beginEntrance(proxy, context: context)
+    }
+
     /// What is known of a window that just opened, now that the controller has placed it: where it
     /// was asked for, the window it went beside, whether it hangs from another. Picks its effect again;
     /// the entrance hasn't been seen yet (it starts in this same turn of the run loop).

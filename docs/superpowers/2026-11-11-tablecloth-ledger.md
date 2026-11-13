@@ -274,3 +274,13 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - Ruling: 只把**已在前台**分支的 See All（`.seeAll` + `gestureEntry` 开）换成 `view.fly(to: overview)`；隐藏→show 的 `pendingFitAll` 三处消费点（:2485/:2501/:2659）仍走 `animateCamera` — 理由：那三处是窗口入场后的首次 fit，后面连着 listing 与首次同步，换驱动会扩大无关路径的改动面，而手势入场本身已覆盖「可重定向」需求 — 代价：从窗口四指上滑（tap 模式外的 See All 分支）仍固定 0.42s 不可重定向。
 - Ruling: `entryStart/entryOverview` 用 `Camera`（有默认 `init(origin:zoom:)`）而非 `Camera?`，与计划字面一致；`entryPath` 作为「是否在入场中」的唯一真值。
 - 待真机验收（未实测，不声称顺滑）：1:1 跟手是否无固定计时滞后；`entryDistance 0.30` 的行程是否合适；释放弹簧 response/damping 0.45/0.72 的手感；Reduce Motion 下是否为瞬切；从隐藏状态取消后画布是否正确退场。
+
+### #28 Task 4 完成：逐卡飞行 A2
+
+- `CanvasController`：`entryCards`（proxy + `EntryFlight.Card`）、`entryReleaseCards`（释放后按当下 origin 重定基到 `to`＝stored／`from`＝真实位）。
+- `beginEntryCards()`：以 `snapshot(at: entryStart)` 一次读取真实帧（按 `toView` 换到视图坐标系，因为 listing 是全局点而 `entryStart` 是视图相机），`stored` 取 `proxies[].worldRect`、`insets` 取 `proxies[].inset`，`EntryFlight.cards(...)` 得飞行集；每张飞行卡立刻 `proxy.place(at: card.from)`，手一落第一帧就是真实堆叠位（Q3）；有 stored 位但屏上没有的窗口（最小化／别的 Space）走 `view.revealArrival` 在原地淡入。attached 子窗口随父飞由 `worldRect.didSet` 自动处理（Q7），未写任何附加代码。
+- `driveEntry(t)`：卡与相机同一个 t（`EntryFlight.origin(card, at: t)`），不会中途分离；`driveEntryFlight(p)`：释放弹簧的步进，钳制 lerp（Q6 卡不过冲）；`clearEntry()`：收尾把每张卡落到 `entryReleaseCards.to`，未释放就中断则落到 `card.to`，不留半空中的卡。
+- 测试：Task 4 为胶水层（计划未要求新单测；纯几何由 Task 2 的 9 项覆盖）。全量 `swift test` → **733 tests, 1 skipped, 0 failures**；`swift build` 无新增 warning。
+- Ruling: 新增 `CanvasView.revealArrival(of:context:)`（3 行，转调既有 `beginEntrance`）—— 计划 Step 3 让复用 `view.setArrival`，但 `setArrival` 只对「正在开场」的 `entrances` 条目生效（内部 guard `opening`），对已有窗口 no-op，屏外卡根本无法淡入 — 代价：view 多一个极小入口（复用既有入场机制，未新增动画/绘制代码）。
+- Ruling: 帧坐标先 `toView` 再交给 `EntryFlight.cards`（相机传 `entryStart`），而不是传 `snapshot.camera` — 理由：listing 帧是全局点，`entryStart` 是视图相机；副屏 `display.origin ≠ 0` 时混用会把 `from` 整体偏移一个显示器原点 — 代价：多一次逐帧平移，主屏上等价。
+- 待真机验收（未实测）：卡是否真从真实堆叠位起飞（无分裂感）、与相机同步落位、屏外卡原地淡入是否过亮/抢眼、最小化窗口恢复后的位置是否仍为 stored、live 模式（realWindows）下卡飞行是否跟手。
