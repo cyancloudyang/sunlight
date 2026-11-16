@@ -6,7 +6,9 @@ import os
 /// modifier, no key first, and every direction pans, up included. A four-finger *tap* (four fingers
 /// down and up again without moving) shows everything, as Mission Control's swipe does; or, by
 /// Settings › How to use, a four-finger *swipe up* does — any upward stroke, however slow, told from a
-/// pan by its direction (horizontal and diagonal drags still pan; up opens the whole canvas). Thumb and
+/// pan by its direction (horizontal and diagonal drags still pan; up opens the whole canvas). An upward
+/// drag pans nothing while it is still on its way up: the canvas holds still until the stroke is far
+/// enough to be the swipe, so the pull-back starts where the hand does, not after a pan (A1). Thumb and
 /// three fingers spreading apart is Show Desktop, as on the Mac.
 ///
 /// The touches come straight from the trackpad through MultitouchSupport, the private framework Mac
@@ -48,15 +50,18 @@ final class TrackpadPan: @unchecked Sendable {
     /// a three-finger tap (Look Up) later never makes one. (`entryLanding` is the swipe up's, wider.)
     fileprivate static let tapLanding: CFAbsoluteTime = 0.15
     /// Centroid rise, in trackpad widths, that makes an upward drag a swipe up and starts the entry (t=0).
-    /// About a centimetre and a half on a built-in trackpad: a short stroke, not a shifting hand.
-    /// Provisional (2026-11-16): 0.12 was measured in the tests, not on a hand.
-    fileprivate static let swipeDistance: CGFloat = 0.10
+    /// About half a centimetre on a built-in trackpad: just past `slop`, enough to know the hand is going
+    /// up, so the pull-back starts with the hand instead of a pan doing it first.
+    /// Provisional (2026-11-16): a hand's swipes up measured 0.047–0.10 widths of rise, so 0.10 (the
+    /// distance the old tests' five-centimetre strokes made) meant most swipes up never began an entry;
+    /// and every frame before it panned the canvas up, unscaled — the "up first, then pull back" report.
+    fileprivate static let swipeDistance: CGFloat = 0.035
     /// Further centroid rise, in trackpad widths, that takes the entry from just begun (t=0) to all the
-    /// way in (t=1). About two and a half centimetres on a built-in trackpad: a hand's usual swipe-up
-    /// stroke, so the pull-back follows the hand over the whole of it. Provisional, to be confirmed on
-    /// the device. (0.30 — four centimetres — was longer than a hand swipes: a natural 2–3 cm stroke got
-    /// as far as t≈0.3, under the commit threshold, so the release always went back out.)
-    fileprivate static let entryDistance: CGFloat = 0.19
+    /// way in (t=1). About a centimetre and a half on a built-in trackpad: a hand's usual swipe-up
+    /// stroke, so the pull-back follows the hand over the whole of it and the release commits at
+    /// 0.065 (halfway). Provisional, to be confirmed on the device. (0.19 put the commit at 0.145: a
+    /// hand's rise of 0.07–0.10 released under it and always went back out.)
+    fileprivate static let entryDistance: CGFloat = 0.095
     /// How far off vertical a swipe up may lean and still be one. A hand swipes up 20–30° off vertical; a
     /// deliberate diagonal is 45°. Provisional, to be confirmed on the device. (`axisLock`'s 22.5° held
     /// the entry to within 22.5° of vertical, so a hand's naturally leaning swipe was read as a diagonal
@@ -384,7 +389,7 @@ struct TrackpadRecognizer {
             }
             if peakRise < TrackpadPan.swipeDistance {
                 return line + " — no entry: rise \(String(format: "%.3f", peakRise)) < "
-                    + "\(String(format: "%.2f", TrackpadPan.swipeDistance))"
+                    + "\(String(format: "%.3f", TrackpadPan.swipeDistance))"
             }
             let upright = .pi / 2 - TrackpadPan.entryAngle
             if peakAngle < upright {
@@ -481,12 +486,12 @@ struct TrackpadRecognizer {
             // Any upward swipe opens the canvas, however slow: the whole travel so far, straight up and
             // far enough, begins the entry. Progress is measured from the recognition threshold, so the
             // canvas starts at the camera it was on (no jump) and the rest of the stroke drives the
-            // pull-back; the finger coming back down scrubs it out again. The pan it interrupts has moved
-            // the canvas a little; entry goes on from there.
+            // pull-back; the finger coming back down scrubs it out again. Until the swipe is far enough
+            // to be one, an upward drag pans nothing: the canvas waits under the hand (A1).
             let rise = centroid.y - origin.y   // the centroid's y goes up the trackpad
             let run = abs(centroid.x - origin.x)
             let angle = atan2(rise, run)
-            let upright = angle >= .pi / 2 - TrackpadPan.entryAngle
+            let upright = rise > 0 && angle >= .pi / 2 - TrackpadPan.entryAngle
             let recognized = rise >= TrackpadPan.swipeDistance && upright
             trace.frame(landing: landing, rise: rise, angle: angle)
             if diagnose {
@@ -494,7 +499,8 @@ struct TrackpadRecognizer {
                          + "run \(String(format: "%.3f", run)) "
                          + "\(Trace.offVertical(angle))° off vertical "
                          + "landing +\(String(format: "%.2f", landing))s "
-                         + "\(entryActive ? "entry" : "pan") → \(recognized ? "entry" : "no")")
+                         + "\(entryActive ? "entry" : (upright ? "up" : "pan")) → "
+                         + "\(recognized || entryActive ? "entry" : "no")")
             }
             if recognized || entryActive {
                 let span = TrackpadPan.entryDistance - TrackpadPan.swipeDistance
@@ -510,6 +516,14 @@ struct TrackpadRecognizer {
                              + "landing +\(String(format: "%.2f", landing))s")
                 }
                 return phases + (first ? [.entryBegan, .entryProgress(t)] : [.entryProgress(t)])
+            }
+            if upright {
+                // Up, but not yet far enough to be a swipe up: hold the canvas still. Panning here is
+                // what the hand saw as the window sliding up unscaled before the pull-back, and it also
+                // handed the entry a camera already moved. The frames that aren't upright (a diagonal,
+                // a downward drag) fall through and pan as they always have.
+                last = centroid
+                return phases
             }
         }
         switch lock {

@@ -107,8 +107,9 @@ final class TrackpadRecognizerTests: XCTestCase {
     }
 
     func testEntryProgressRisesFromZeroToOneAndClamps() {
-        // dragOrigin y=0.2; the entry begins at rise 0.10, which is t=0 by definition, so the first frame
-        // it is seen on is near zero (and the camera does not jump); full at rise 0.19 (t=1); past stays 1.
+        // dragOrigin y=0.2; the entry begins at rise 0.035 (a hand's short stroke, not a shifting hand),
+        // which is t=0 by definition, so the first frame it is seen on is near zero (and the camera does
+        // not jump); full at rise 0.095 (t=1); past stays 1.
         let phases = touch(line(from: CGPoint(x: 0.5, y: 0.2), to: CGPoint(x: 0.5, y: 0.6), steps: 100), swipeUp: true)
         let ts = phases.compactMap { if case .entryProgress(let t) = $0 { t } else { nil } }
         XCTAssertEqual(ts.first ?? -1, 0, accuracy: 0.05)   // (one frame past the threshold at most)
@@ -273,14 +274,54 @@ final class TrackpadRecognizerTests: XCTestCase {
         XCTAssertNotEqual(phases.last, .entryEnded)
     }
 
-    func testASwipeStoppingShortOfTheRecognitionDistanceStillPans() {
-        // Eight millimetres up: under the distance a swipe up needs, so it is a pan like any other.
-        var list = stroke(from: CGPoint(x: 0.5, y: 0.3), rise: 0.06, run: 0.02, steps: 20)
+    func testANaturalSwipeUpEntersAndCommits() {
+        // The rises the user's log showed for a hand's natural swipe up (0.070, 0.084, 0.100 widths):
+        // each has to begin the entry, and the release has to be over the commit threshold, or the view
+        // always went back out and the swipe up never opened anything.
+        for rise in [CGFloat(0.070), 0.084, 0.100] {
+            let phases = feed(stroke(from: CGPoint(x: 0.5, y: 0.3), rise: rise, run: rise * 0.35, steps: 20)
+                              + [(0.30, Set<Int32>(), CGPoint.zero)])
+            XCTAssertEqual(phases.filter { $0 == .entryBegan }.count, 1, "rise \(rise)")
+            XCTAssertEqual(phases.last, .entryEnded, "rise \(rise)")
+            let last = progresses(phases).last ?? 0
+            XCTAssertTrue(EntryFlight.committed(progress: last, threshold: EntryFlight.commitThreshold),
+                          "rise \(rise) released at t \(last)")
+        }
+        // 0.047, the shortest the log showed: a light push, short of the halfway point — it goes back.
+        let light = feed(stroke(from: CGPoint(x: 0.5, y: 0.3), rise: 0.047, run: 0.016, steps: 12)
+                         + [(0.30, Set<Int32>(), CGPoint.zero)])
+        XCTAssertEqual(light.filter { $0 == .entryBegan }.count, 1)
+        XCTAssertLessThan(progresses(light).last ?? 1, EntryFlight.commitThreshold)
+    }
+
+    func testAnUpwardSwipePullsBackFromTheStartWithoutPanningFirst() {
+        // The report: the window slid up unscaled, and only then did the view pull back. The pan came
+        // first, on the frames before the swipe was recognised. A hand's swipe up is the entry from its
+        // first frame: not one .changed on the way.
+        let phases = feed(handSwipe() + [(0.34, Set<Int32>(), CGPoint.zero)])
+        XCTAssertTrue(travel(in: phases).isEmpty, "the canvas never panned: \(travel(in: phases))")
+        guard let began = phases.firstIndex(of: .began),
+              let entrance = phases.firstIndex(of: .entryBegan) else {
+            return XCTFail("no swipe up in \(phases)")
+        }
+        // Right behind the drag's onset: a few frames of the hand's travel, not a stroke's length.
+        XCTAssertLessThanOrEqual(entrance - began, 6, "the entry begins with the hand, not after a pan")
+        let ts = progresses(phases)
+        XCTAssertEqual(ts.first ?? -1, 0, accuracy: 0.05, "and from the camera it was already on")
+        XCTAssertTrue(zip(ts, ts.dropFirst()).allSatisfy { $0 <= $1 + 0.001 }, "upwards throughout")
+    }
+
+    func testAnUpwardPushUnderTheRecognitionDistanceHoldsTheCanvasStill() {
+        // Two millimetres up, a tenth of a trackpad width: under the rise a swipe up needs. Not a pan
+        // either — the canvas waits for the hand to say which it is, so no entry ever starts from a
+        // canvas another frame of the same touch has already moved.
+        var list = stroke(from: CGPoint(x: 0.5, y: 0.3), rise: 0.02, run: 0.01, steps: 10)
         list.append((0.20, Set<Int32>(), CGPoint.zero))
         let phases = feed(list)
         XCTAssertEqual(phases.first, .began)
-        XCTAssertFalse(phases.contains(.entryBegan))
         XCTAssertEqual(phases.last, .ended)
+        XCTAssertFalse(phases.contains { if case .changed = $0 { true } else { false } })
+        XCTAssertFalse(phases.contains(.entryBegan))
     }
 
     // MARK: Drag

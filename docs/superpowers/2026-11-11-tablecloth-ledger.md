@@ -321,3 +321,26 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - 诊断样例（合成手滑，2.2cm、25° 偏竖直、中途 2 帧瞬掉）：`frame: rise 0.021 … pan → no` … `frame: rise 0.096 … pan → no` / `four contacts again after 16ms — kept, no entry yet` / `the entry begins — rise 0.109 at 25° off vertical` / `frame: rise 0.121 … entry → entry` … / `swipe up — landing +0.00s, peak rise 0.167 (25° off vertical), 1 three-contact frame(s) kept, entry to t 0.74 (committed)`。
 - Provisional（**待用户真机复测，未声称修好**）：`swipeDistance 0.10`、`entryDistance 0.19`、`entryAngle 35°`、`entryLanding 0.4s`、`contactGrace 0.05s` —— 全部由合成行程与 PM 日志推得，无真手测量；`commitThreshold 0.5` 与 spring `0.45/0.72` 未动。
 - 边界：未 push upstream，PR #1 保持 draft；未改 SIP／系统偏好／常驻捕获流／私有 API；`show()` 与 `beginEntryCards` 的「无跳变」逻辑未动；工作区里的 `docs/superpowers/2026-11-13-spatial-camera-entry-acceptance.md` 未提交改动保持原样未触碰。
+
+### #31 A1 跟手入场修订：去掉「平移先行段」，识别/满程降到真手行程
+- 发现（PM 真机复测原话「四指上滑时，先是在当前窗口没有缩放的情况下进行上移，然后才随着四指上滑的进程，视角拉远」+ pid 25607 日志复核）：根因与 PM 给的定位一致，两处：
+  1. `update()` 的 entry 识别要 `rise >= swipeDistance 0.10`，而自然上滑 peak rise 只有 0.047–0.099 —— 绝大多数上滑根本进不了 entry（日志 `no entry: rise < 0.10`），径直到 `.changed(travel)`（`.plumb` 清 dx、dy<0）→ `view.trackpadPan(by:)`，即「窗口不缩放先上移」。
+  2. 即便认出（rise 0.10–0.119），`t` 只有 0.04–0.21，release 必 back out；commit 需 rise 0.145，而实测 0.146–0.254 才到 t 0.51–1.00。
+  3. 连带：entry 前那几帧平移已把相机推走，`beginEntry()` 的 `entryStart = view.camera` 取到的是平移后的相机。
+- TDD RED（先写，`Tests/CanvasTests/TrackpadRecognizerTests.swift`）：
+  - 新增 `testANaturalSwipeUpEntersAndCommits`：实测自然行程 rise 0.070/0.084/0.100 → 必须 `.entryBegan` 一次 + release t≥0.5（committed）+ `.entryEnded`；rise 0.047 轻推 → t<0.5 退回。
+  - 新增 `testAnUpwardSwipePullsBackFromTheStartWithoutPanningFirst`：整段向上拖拽 `travel(in:)` 必须为空（一个 `.changed` 都没有）、`.entryBegan` 紧跟 `.began`（相位数 ≤6）、首个 `t≈0`（容差 0.05）、t 单调。
+  - 新增 `testAnUpwardPushUnderTheRecognitionDistanceHoldsTheCanvasStill`（按新语义重写旧 `testASwipeStoppingShortOfTheRecognitionDistanceStillPans`）。
+  - RED：`swift test --filter TrackpadRecognizerTests` → **32 tests, 12 failures**，原因均为功能缺失：自然 0.07/0.084 无 `.entryBegan`（"0" ≠ "1"）、0.100 只到 t≈0（3.08e-16）且末相 `.ended`、0.047 同样无 entry；无平移用例实测出 20 个 `.changed`（`the canvas never panned: [(0.0097, -0.0209), (0.0019, -0.0042) …]`）且 entry 晚了 20 个相位。
+- GREEN 实现（`Sources/Canvas/TrackpadPan.swift`）：
+  - 常量：`swipeDistance 0.10 → 0.035`（≈0.5cm，刚过 `slop` 就能确认方向）、`entryDistance 0.19 → 0.095`（≈1.5cm 满程）→ commit 在 rise = 0.5×(0.035+0.095) = **0.065**。t 公式未动。
+  - entry 意图判定与抑制：`upright = rise > 0 && angle >= π/2 − entryAngle(35°)`；entry 模式下 `upright` 帧**不再发 `.changed`**（`last = centroid` 后直接返回 `phases`，相机原地不动），直到 `rise >= 0.035` 转 `.entryBegan`。非 upright（水平、45° 对角、向下、rise≤0）照旧走 `switch lock` + `.changed` 平移，故「水平/斜/向下仍平移」全部保留。entry 一旦开始，`entryActive` 使后续所有帧（含手指回拉 rise 变小甚至变负）都留在 entry 路径，回拉 scrub-back 语义不变。
+  - 方向噪声：确认期不引入任何平移（不再「先平移等方向」）；首帧若偏离竖直 >35° 只丢那一帧的识别机会，下一帧累计角度对了即 hold。
+  - 诊断日志标签由两态改三态：`entry` / `up`（升起但未到识别距离，正在 hold）/ `pan`；摘要里 `no entry: rise x < y` 改为三位小数，便于读 0.035 这个量级。
+  - `CanvasController.swift` **未改**：`.began` 里 `pendingPan = nil`（在前台）不发平移、`show()` 不动相机，故抑制 `.changed` 后 `beginEntry()` 自然拿到未平移的进入相机 —— 原 watch item 复查结论是不需要改；`.ended` 路径在「只有 `.began` + 无 entry」时仍调 `view.trackpadPanEnded()`（空速度 → 无 coast，`panVelocity` 清零），无副作用。
+- 修正的既有测试（合法更新，非削弱）：`testASwipeStoppingShortOfTheRecognitionDistanceStillPans`（rise 0.06）**重写**为 `testAnUpwardPushUnderTheRecognitionDistanceHoldsTheCanvasStill` —— 识别降到 0.035 后「向上 0.06 仍平移」的前提在设计决策 #23 下已不成立（上滑＝entry），改为钉住仍成立的不变量：低于识别 rise 的向上轻推不平移也不进 entry（相机保持静止）。`testEntryProgressRisesFromZeroToOneAndClamps` 仅改注释里的阈值（0.10/0.19 → 0.035/0.095），断言（首帧 t 容差 0.05、末值 0.001、单调、clamp）强度不变。`handSwipe` 系列、`testEntryProgressScrubsBackWhenTheFingerReturns`、`testWithSwipeUpChosenADiagonalDragStillPans`（45°，仍平移）、tap 模式与瞬掉/landing 系列均无需改动即全绿。
+- 新常量表与核算：`swipeDistance 0.035`、`entryDistance 0.095`、识别 rise 0.035、commit rise 0.065、满程 rise 0.095。实测行程核算：0.070 → t 0.583 ✓commit；0.084 → t 0.817 ✓；0.100 → t 1.00 ✓；0.047 → t 0.20 退回（极短轻推，符合设计）。0.047 仍能进 entry（这就是「从 onset 附近就开始拉远」的代价：轻推会起一点 t 再回弹，回弹即 `.entryEnded` + spring 回 `entryStart`）。
+- 验收：`swift test --filter TrackpadRecognizerTests` → **32 tests, 0 failures**；全量 `swift test` → **748 tests, 1 skipped, 0 failures**（746 基线 + 2 净新增；skip 仍为 `DockItemTests.testTheAppsOwnBundleIsItsIcon`）。`swift build` → Build complete，`TrackpadPan.swift` 无 warning（余下 warning 为既有 Combine/AppKit 噪音，未新增）。`make app SIGN=-` → Built build/Sunlight.app（0.2.4, com.spacefarm.sunlight, signed ad-hoc）。
+- 诊断样例：本轮未跑真机，暂不贴日志。复测时关注三处：① 上滑开头是否有 `Entry diag frame: rise 0.0xx … up → no` 连着几帧（＝hold，相机不动）而不是 `pan`；② `the entry begins — rise 0.035…` 是否紧跟 `.began`（≈30ms）；③ 摘要 `entry to t 0.xx (committed / back out)` 与手感受否一致。
+- Provisional（**待用户真机复测，未声称通过**）：`swipeDistance 0.035`、`entryDistance 0.095` 由实测 peak rise 分布与「commit rise ≤0.07」约束推得，尚无真手标定；`commitThreshold 0.5`、`contactGrace 0.05`、`entryLanding 0.4`、`entryAngle 35°`、`slop 0.02`、`tapLanding 0.15`、spring `0.45/0.72` 全部未动。
+- 边界：只 push origin（cyancloudyang/sunlight），未 push upstream，PR #1 保持 draft；未改 SIP／系统偏好／常驻捕获流／私有 API／登录项；`show()`、`beginEntryCards`、`endEntry` 释放速度接线均未动；`docs/superpowers/2026-11-13-spatial-camera-entry-acceptance.md` 的未提交改动未 stage 未提交。
