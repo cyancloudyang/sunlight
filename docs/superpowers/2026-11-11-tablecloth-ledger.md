@@ -302,3 +302,22 @@ Handoff delivery: docs/superpowers/2026-11-11-tablecloth-handoff.md、2026-11-11
 - `CanvasController.endEntry`：`let speed = EntryFlight.releaseSpeed(velocity: EntryFlight.velocity(entrySamples), entryLength: entryPath?.length ?? 0)`，`view.fly(to: target, speed: speed, step:…, completion:…)`；`Log.note` 带上 `speed` 便于真机读日志。Reduce Motion 分支不变（直接 `view.set`）。
 - 未改动：采样窗（末 5 取末 3）、spring `0.45/0.72`、`commitThreshold 0.5`、卡 clamp —— 手感参数一律留给真机。
 - 待真机验收（**未实测，不声称顺滑**）：flick 释放是否真有「越甩越快」的收束感、`maxProgressRate 4` 是否偏高/偏低、回抽释放的外溢量是否自然、与卡飞行是否仍同步。
+
+### #30 A1/A2 真机失败修订：四指上滑认不出（接触瞬掉 / landing / 角度 / 行程）+ 诊断日志
+- 发现（PM 真机 + 日志核实，pid 97375）：上滑多帧只有 `Pan: four-finger drag, bringing the canvas back`、无 `Entry:`；唯一认出的一次 `released at 0.09 — back out`。四条独立原因，逐条复核确认：
+  1. `update` 的 `guard ids.count == 4 else { return reset() }`——真实触控板常有一两帧读成 3 接触，一旦发生就整体 `reset()`（丢 `dragOrigin`/`landingDelay`/`entryActive`，entry 中还会提前发 `.entryEnded`），重挂 anchor 后 `landedTogether` 按首指 `touchBegan` 重算必为 false，此手再也认不出。
+  2. `landedTogether` 要求四指 0.15s 内同落；手是滚上去的。
+  3. 识别角度用 `axisLock = 22.5°`（偏竖直），而自然上滑 20–30° 偏竖直 → 当成对角平移。
+  4. 几何：`swipeDistance 0.12` / `entryDistance 0.30` → commit 需 rise ≥ 0.21（≈3.5cm），自然 2–3cm 只到 t 0.3，`commitThreshold 0.5` 永远不过 → 必回弹。
+- TDD RED（先写 8 条，`Tests/CanvasTests/TrackpadRecognizerTests.swift` 新增 “Real hands (A1/A2, 2026-11-16)” 段，helper `feed`/`stroke`/`handSwipe`，自然手＝rise 0.167（≈2.2cm）、25° 偏竖直、40 帧）：`swift test --filter TrackpadRecognizerTests` → **30 tests, 14 failures**。RED 输出要点：`testAHandSwipeUpReachesWhatCommittedMeans` 无 `.entryBegan`（"0" is not equal to "1"）；`testAHandLandingItsFingersOneAtATimeStillBeginsTheEntry` 同上；`testATransientContactDropDoesNotEndTheEntry` 发了 `.ended` 且无 entryBegan/entryEnded；`testTheEntryKeepsItsProgressAcrossATransientContactDrop` 掉落前 t=0；`testAHandSwipeUpPulledBackOutGoesBackInstead` 末相 `.ended` 而非 `.entryEnded`。
+- GREEN 实现：
+  - 接触瞬掉容忍：新增 `contactsMissing`，`ids.count < 4` 且手势进行中（`last != nil || entryActive || dragOrigin != nil`）时先记时刻并**照旧返回**（不改任何状态），`contactGrace = 0.05`（60Hz 约 2–3 帧）内恢复则清标记、`trace.drops += 1`、本次上滑继续；超过宽限才 `end()`。`.` 完全无接触（手真的抬起）不走宽限，仍是 `.entryEnded`/`.ended` + tap 判定。
+  - landing 双轨：`landedTogether` 改由 `landingDelay`（第四指落下的时刻减去首指 `touchBegan`）派生，`tap` 仍要 `tapLanding 0.15`（三指手势后补第四指不成立），入图门禁改用 `entryLanding 0.4`。
+  - 角度：入图新增 `entryAngle = 35°`（偏竖直），`axisLock 22.5°` 继续只管 pan 的锁轴，水平/45° 对角照旧平移（既有 22 条断言全绿）。
+  - 几何：`swipeDistance 0.12 → 0.10`（≈1.5cm 起认）、`entryDistance 0.30 → 0.19`（≈2.5cm 到 t=1，让整段自然行程都跟手）。`commitThreshold` **未动**（0.5）——瓶颈是几何不是阈值；改几何后 commit 只需 rise 0.145（≈1.9cm），故 `EntryFlightTests` 的 0.5 断言保持原样，可取消语义不变（回拉仍 back out）。
+  - 诊断日志（临时，`Log.note`）：`defaults write com.spacefarm.sunlight TrackpadDiagnostics -bool YES` 打开逐帧日志（rise/run/° 偏竖直/landing/当前是 pan 还是 entry/本帧是否识别）；每次上滑结束一行摘要（landing、peak rise、峰值角度、逃过的 3 接触帧数、是否 entry、最终 t 与 committed/back out）；接触瞬掉/恢复、entry 起始各一行。摘要与瞬掉行常开（一次上滑一行，量级可忽略），逐帧行只在该 defaults 开关打开时写。
+- 修正的既有测试（预期值随常量走，非放宽语义）：`testEntryProgressRisesFromZeroToOneAndClamps` 步长 20→100、首帧 t 容差 0.001→0.05（步长 0.02 会跨过 0.10 阈值 0.02，t 起始本应≈0）；两条新用例自纠：`testAContactLostForLongerThanTheGraceEndsTheEntry` 的掉落窗口移后到已认出之后（38…50 帧 = 0.104s），`testTheEntryKeepsItsProgressAcrossATransientContactDrop` 的末值改断言「掉落前 t>0、之后继续升到 >0.7、全程单调」（原写 t=1 与 0.167 行程不符）。
+- 验收：`swift test --filter TrackpadRecognizerTests` → **30 tests, 0 failures**；全量 `swift test` → **746 tests, 1 skipped, 0 failures**（738 基线 + 8 新；skip 仍为 `DockItemTests.testTheAppsOwnBundleIsItsIcon`）。中途一次 `LiveWindowsConnectionTests.testPatientConnectionOutlastsOneSocketTimeout`（1.4114 < 1.4）失败，单跑两次 17 tests 全绿、全量重跑亦全绿 —— 与本改动无关的 socket 时序抖动。`make app SIGN=-` → Built build/Sunlight.app（0.2.4, com.spacefarm.sunlight, ad-hoc）。
+- 诊断样例（合成手滑，2.2cm、25° 偏竖直、中途 2 帧瞬掉）：`frame: rise 0.021 … pan → no` … `frame: rise 0.096 … pan → no` / `four contacts again after 16ms — kept, no entry yet` / `the entry begins — rise 0.109 at 25° off vertical` / `frame: rise 0.121 … entry → entry` … / `swipe up — landing +0.00s, peak rise 0.167 (25° off vertical), 1 three-contact frame(s) kept, entry to t 0.74 (committed)`。
+- Provisional（**待用户真机复测，未声称修好**）：`swipeDistance 0.10`、`entryDistance 0.19`、`entryAngle 35°`、`entryLanding 0.4s`、`contactGrace 0.05s` —— 全部由合成行程与 PM 日志推得，无真手测量；`commitThreshold 0.5` 与 spring `0.45/0.72` 未动。
+- 边界：未 push upstream，PR #1 保持 draft；未改 SIP／系统偏好／常驻捕获流／私有 API；`show()` 与 `beginEntryCards` 的「无跳变」逻辑未动；工作区里的 `docs/superpowers/2026-11-13-spatial-camera-entry-acceptance.md` 未提交改动保持原样未触碰。
