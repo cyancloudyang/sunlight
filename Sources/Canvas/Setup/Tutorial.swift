@@ -50,7 +50,7 @@ enum Tutorial {
         /// What the hand does: the words under the picture.
         var how: String { mouse?.how ?? gesture.how }
 
-        /// The step with See All shown the way Settings › How to use has it (the tap by default).
+        /// The step with See All shown the way Settings › How to use has it (swipe up by default).
         func resolved(seeAll: Settings.SeeAllGesture) -> Step {
             var step = self
             if gesture == .fourFingerTap || gesture == .swipeUp {

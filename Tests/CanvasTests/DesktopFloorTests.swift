@@ -94,3 +94,19 @@ final class DesktopFloorTests: XCTestCase {
         XCTAssertNil(DesktopFiles.command(keyCode: kVK_ANSI_Z, modifiers: .command))     // undo stays undo
     }
 }
+
+/// The desktop floor is captured by window id, which only the private path can do: without it the floor
+/// stays off rather than failing capture after capture (#8 in the handoff).
+final class DesktopFloorAvailabilityTests: XCTestCase {
+    func testTheFloorIsOnWhenAskedForAndCapturable() {
+        XCTAssertTrue(DesktopFloor.enabled(show: true, capturesByID: true))
+    }
+
+    func testTheFloorIsOffWhenNotAskedFor() {
+        XCTAssertFalse(DesktopFloor.enabled(show: false, capturesByID: true))
+    }
+
+    func testTheFloorIsOffWithoutAWayToCaptureIt() {
+        XCTAssertFalse(DesktopFloor.enabled(show: true, capturesByID: false))
+    }
+}

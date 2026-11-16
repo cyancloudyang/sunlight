@@ -33,6 +33,8 @@ final class CanvasView: NSView {
 
     /// A double-click or ⏎: bring the window to the middle of the screen and enter it.
     var onHandoff: ((WindowProxy) -> Void)?
+    var onBookmarkSave: ((Int) -> Void)?
+    var onBookmarkJump: ((Int) -> Void)?
     /// Zoomed in or out, a click on a window that didn't become a drag: enter it at 1:1 around the clicked
     /// spot (`at`: where it was pressed, view coordinates; `offset`: where in the window, world units).
     var onClickEnter: ((_ proxy: WindowProxy, _ at: CGPoint, _ offset: CGPoint) -> Void)?
@@ -341,7 +343,20 @@ final class CanvasView: NSView {
     private var resizing: Resize?
     /// The edges under the pointer, as the cursor shows them.
     private var cursorEdges: Resizing.Edges = []
-    private var panning = false
+    /// The proxy the non-resize cursor was set over: the hand states differ over a window and the cloth.
+    private var cursorProxy: WindowProxy?
+    private var panning = false {
+        didSet {
+            guard panning != oldValue else { return }
+            if panning {
+                NSCursor.closedHand.set()
+            } else {
+                updateHover(at: pointerTopLeft)
+                // The hover pass may have been a no-op (same proxy, same edges): the grab still ends.
+                if cursorEdges.isEmpty { (hovered == nil ? NSCursor.openHand : NSCursor.pointingHand).set() }
+            }
+        }
+    }
     private var lastPointer: CGPoint = .zero
     private var hovered: WindowProxy?
 
@@ -364,6 +379,8 @@ final class CanvasView: NSView {
         let path: CameraPath
         let spring: Spring   // progress along the path, as offset from 1
         let start: CFTimeInterval
+        /// Rides the same spring, for a proxy growing to the screen (or shrinking home) with the camera.
+        let step: ((CGFloat) -> Void)?
         let completion: (() -> Void)?
     }
     private var flight: Flight?
@@ -664,9 +681,9 @@ final class CanvasView: NSView {
             CATransaction.setDisableActions(true)  // follow the colour panel live, no cross-fade
         }
         let from = layer?.backgroundColor
-        // Deliberately not fully opaque: the window beneath is non-opaque too, which keeps the window
-        // server from marking the real windows as occluded (occluded apps throttle or stop drawing).
-        layer?.backgroundColor = background.withAlphaComponent(showsRealWindows ? 0.01 : 0.985).cgColor
+        // Fully opaque: the window server marks the real windows beneath as occluded, and occluded
+        // apps throttle or stop drawing — the map covering the desktop is what quiets them.
+        layer?.backgroundColor = background.withAlphaComponent(1.0).cgColor
         if animated, let from {
             // The view is its backing layer's delegate and gives it no implicit animations, so the fade
             // is spelled out; the text layers below pick up the transaction's on their own.
@@ -715,6 +732,7 @@ final class CanvasView: NSView {
         styleLabel(proxy)
         proxiesLayer(for: proxy).addSublayer(proxy.layer)
         chromeLayer.addSublayer(proxy.label)
+        chromeLayer.addSublayer(proxy.banner)
         chromeLayer.addSublayer(proxy.controls)
         chromeLayer.addSublayer(proxy.trailingControls)
         proxy.layout(zoom: camera.zoom)
@@ -1260,8 +1278,8 @@ final class CanvasView: NSView {
     var isOneToOne: Bool { abs(camera.zoom - 1) < 0.001 }
 
     /// Marks the mouse events Sunlight posts to pass a press on (`eventSourceUserData`), so the canvas
-    /// never takes one of its own for the user's.
-    static let passedOnMark: Int64 = 0x53554e4c
+    /// never takes one of its own for the user's. Read from the tap threads, so nonisolated.
+    nonisolated static let passedOnMark: Int64 = 0x53554e4c
 
     private static func isPassedOn(_ event: NSEvent) -> Bool {
         event.cgEvent?.getIntegerValueField(.eventSourceUserData) == passedOnMark
@@ -1280,9 +1298,16 @@ final class CanvasView: NSView {
 
     /// Flies to a camera along a pan-and-zoom path, driven by a spring that overshoots a little and
     /// settles. Calling it mid-flight re-aims from where the camera is, keeping its speed, so walking
-    /// the switcher quickly stays one fluid move instead of restarting at every step.
-    func fly(to target: Camera, completion: (() -> Void)? = nil) {
-        var speed: CGFloat = 0   // along the path, in the path's own units per second
+    /// the switcher quickly stays one fluid move instead of restarting at every step. `step` rides the
+    /// same spring (the focus flight's proxy growing with the camera); it is not called on interrupt.
+    ///
+    /// `speed` is how fast this flight is already travelling, along the path, in the path's own units per
+    /// second — the momentum a hand lent it before letting go. Left at 0 a fresh flight starts from rest,
+    /// as every flight did before. A re-aim keeps the speed the flight already had: the new `speed` is
+    /// only read when nothing is flying.
+    func fly(to target: Camera, rho: CGFloat = CameraPath.rho, speed launchSpeed: CGFloat = 0,
+             step: ((CGFloat) -> Void)? = nil, completion: (() -> Void)? = nil) {
+        var speed = launchSpeed   // along the path, in the path's own units per second
         if let f = flight {
             let (x, v) = f.spring.evaluate(at: CGFloat(CACurrentMediaTime() - f.start))
             camera = f.path.camera(at: 1 + x)
@@ -1293,15 +1318,16 @@ final class CanvasView: NSView {
             interruptMotion()
         }
         settleWhenStill = false
-        let path = CameraPath(from: camera, to: target, viewSize: bounds.size)
+        let path = CameraPath(from: camera, to: target, viewSize: bounds.size, rho: rho)
         guard path.length > 1e-4 else {
             set(camera: target)
+            step?(1)
             onFlightProgress?(1)
             completion?()
             return
         }
         flight = Flight(path: path, spring: Spring(x0: -1, v0: speed / path.length),
-                        start: CACurrentMediaTime(), completion: completion)
+                        start: CACurrentMediaTime(), step: step, completion: completion)
         startDisplayLink()
         onViewportChanged?()
     }
@@ -1318,7 +1344,7 @@ final class CanvasView: NSView {
             return
         }
         flight = Flight(path: path, spring: Spring(x0: -1, v0: 0, response: WindowSnap.response, damping: WindowSnap.damping),
-                        start: CACurrentMediaTime(), completion: completion)
+                        start: CACurrentMediaTime(), step: nil, completion: completion)
         startDisplayLink()
         onViewportChanged?()
     }
@@ -1421,12 +1447,14 @@ final class CanvasView: NSView {
             if abs(x) < 0.002, abs(v) < 0.02 {
                 camera = f.path.camera(at: 1)
                 applyCamera()
+                f.step?(1)
                 onFlightProgress?(1)
                 finishMotion()
                 f.completion?()
             } else {
                 camera = f.path.camera(at: 1 + x)
                 applyCamera()
+                f.step?(1 + x)
                 onFlightProgress?(1 + x)
             }
             return
@@ -1498,6 +1526,12 @@ final class CanvasView: NSView {
             veil.fillColor = NSColor.black.cgColor
             e.veil = veil
         }
+    }
+
+    /// A window already on the canvas opens again where the canvas keeps it — no flight, no move: the
+    /// gesture entry's windows that had no real place to come from (minimised, another Space).
+    func revealArrival(of proxy: WindowProxy, context: WindowEffect.Context) {
+        beginEntrance(proxy, context: context)
     }
 
     /// What is known of a window that just opened, now that the controller has placed it: where it
@@ -2147,11 +2181,12 @@ final class CanvasView: NSView {
         }
     }
 
-    private func setCursor(_ edges: Resizing.Edges) {
-        guard edges != cursorEdges else { return }
+    private func setCursor(_ edges: Resizing.Edges, over proxy: WindowProxy? = nil) {
+        guard edges != cursorEdges || (edges.isEmpty && cursorProxy !== proxy) else { return }
         cursorEdges = edges
+        cursorProxy = proxy
         guard !edges.isEmpty else {
-            NSCursor.arrow.set()
+            (proxy == nil ? NSCursor.openHand : NSCursor.pointingHand).set()
             return
         }
         let position: NSCursor.FrameResizePosition
@@ -2210,7 +2245,7 @@ final class CanvasView: NSView {
         setHovered(p)
         p?.hoveredControl = p?.control(at: worldPoint)
         followZoomHover(p)
-        setCursor(resizeEdges(of: p, at: screenPoint))
+        setCursor(resizeEdges(of: p, at: screenPoint), over: p)
     }
 
     /// The pointer resting on a window's green button brings its popover; off it, the popover closes
@@ -2820,6 +2855,7 @@ final class CanvasView: NSView {
                 return
             }
             d.moved = true
+            d.proxy.dragLifted = true
             // ⌘ from the first move pulls a bonded window out of its group: it goes on alone.
             if modifiers.contains(.command), !d.members.isEmpty {
                 release(d.proxy)
@@ -2864,6 +2900,7 @@ final class CanvasView: NSView {
 
     /// A moved window let go: it coasts or drops.
     private func finishDrag(_ d: Drag, modifiers: NSEvent.ModifierFlags, timestamp: TimeInterval) {
+        d.proxy.dragLifted = false
         let freely = modifiers.contains(.command)
         // A group coasts as one: its whole width bounds the coast.
         let body = ([d.proxy] + d.members.map(\.proxy)).map(\.worldRect).reduce(CGRect.null) { $0.union($1) }
@@ -3096,6 +3133,34 @@ final class CanvasView: NSView {
             if command == .deselect { floorFocused = false }
             onFloorCommand?(command)
             return
+        }
+        if let action = BookmarkKey.action(keyCode: Int(event.keyCode), modifiers: event.modifierFlags) {
+            guard !event.isARepeat else { return }
+            switch action {
+            case .save(let number): onBookmarkSave?(number)
+            case .jump(let number): onBookmarkJump?(number)
+            }
+            return
+        }
+        if event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
+            let travel: CGVector
+            let step = 120 / (bounds.width * CanvasView.trackpadPanGain)
+            switch Int(event.keyCode) {
+            case kVK_ANSI_W, kVK_UpArrow: travel = CGVector(dx: 0, dy: step)
+            case kVK_ANSI_S, kVK_DownArrow: travel = CGVector(dx: 0, dy: -step)
+            case kVK_ANSI_A, kVK_LeftArrow: travel = CGVector(dx: step, dy: 0)
+            case kVK_ANSI_D, kVK_RightArrow: travel = CGVector(dx: -step, dy: 0)
+            case kVK_Space:
+                fitAll(animated: true)
+                noteUserMove()
+                return
+            default: travel = .zero
+            }
+            if travel != .zero {
+                trackpadPan(by: travel)
+                trackpadPanCancelled()
+                return
+            }
         }
         switch Int(event.keyCode) {
         case kVK_Escape:

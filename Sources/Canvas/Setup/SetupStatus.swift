@@ -78,13 +78,13 @@ struct SetupStatus: Equatable, Sendable {
                  detail: screenRecording
                     ? "Sunlight can show windows as pictures, and desktop widgets."
                     : "Shows your windows as pictures on the canvas until live windows are set up, and desktop widgets after. Turn Sunlight on in the list that opens, then open Sunlight again.",
-                 state: screenRecording ? .done : .todo, fix: screenRecording ? nil : .allowScreenRecording, required: false),
+                 state: screenRecording ? .done : .todo, fix: screenRecording ? nil : .allowScreenRecording, required: true),
             helperItem(liveReady: liveReady),
             Item(step: .systemIntegrity, title: "System Integrity Protection, partly off",
                  detail: sipNeeded
                     ? "Live windows run inside the Dock, which macOS only allows with two protections off. It takes a restart into Recovery and two lines in Terminal there."
                     : "Filesystem Protections and Debugging Restrictions are off, as live windows need.",
-                 state: sipNeeded ? .todo : .done, fix: sipNeeded ? .showRecoverySteps : nil, required: true),
+                 state: sipNeeded ? .todo : .done, fix: sipNeeded ? .showRecoverySteps : nil, required: false),
             Item(step: .bootArgument, title: "Boot argument",
                  detail: bootArgument
                     ? "The Mac started with -arm64e_preview_abi, so the add-on can load."
@@ -92,14 +92,14 @@ struct SetupStatus: Equatable, Sendable {
                         ? "Set in Recovery with the same steps, or here afterwards."
                         : "Lets the add-on load into the Dock. Sunlight sets it for you; it applies after a restart.",
                  state: bootArgument ? .done : sipNeeded ? .waiting : .todo,
-                 fix: bootArgument || sipNeeded ? nil : .setBootArgument, required: true),
+                 fix: bootArgument || sipNeeded ? nil : .setBootArgument, required: false),
             Item(step: .liveWindows, title: "Live windows",
                  detail: liveWindowsLoaded
                     ? "The add-on is loaded in the Dock and answering."
                     : liveReady ? "Loads Sunlight's add-on into the Dock and switches the canvas to live windows."
                                 : "Ready once the steps above are done.",
                  state: liveWindowsLoaded ? .done : liveReady && helperReady ? .todo : .waiting,
-                 fix: !liveWindowsLoaded && liveReady && helperReady ? .loadLiveWindows : nil, required: true),
+                 fix: !liveWindowsLoaded && liveReady && helperReady ? .loadLiveWindows : nil, required: false),
         ]
     }
 
@@ -115,28 +115,29 @@ struct SetupStatus: Equatable, Sendable {
         switch helper {
         case .daemonEnabled:
             return Item(step: .helper, title: title, detail: "Turned on, so live windows reload by themselves after the Dock restarts.",
-                        state: .done, fix: nil, required: true)
+                        state: .done, fix: nil, required: false)
         case .daemonNeedsApproval:
             return Item(step: .helper, title: title,
                         detail: "Turn on Sunlight in System Settings › General › Login Items, under Allow in the Background.",
-                        state: .todo, fix: .approveHelper, required: true)
+                        state: .todo, fix: .approveHelper, required: false)
         case .daemonNotRegistered:
             return Item(step: .helper, title: title,
                         detail: "Loads live windows into the Dock after the restart, and reloads them whenever the Dock restarts, without asking for your password.",
-                        state: .todo, fix: .approveHelper, required: true)
+                        state: .todo, fix: .approveHelper, required: false)
         case .passwordless:
-            return Item(step: .helper, title: title, detail: "Reloads run without a password.", state: .done, fix: nil, required: true)
+            return Item(step: .helper, title: title, detail: "Reloads run without a password.", state: .done, fix: nil, required: false)
         case .asksForPassword:
             return Item(step: .helper, title: title,
                         detail: "This build asks for your administrator password the first time live windows load, then not again.",
-                        state: .done, fix: nil, required: true)
+                        state: .done, fix: nil, required: false)
         case .missing:
             return Item(step: .helper, title: title, detail: "This copy of Sunlight has no live-windows helper; build it with `make app`.",
-                        state: .todo, fix: nil, required: true)
+                        state: .todo, fix: nil, required: false)
         }
     }
 
-    /// The steps live windows still need, in order.
+    /// The steps the canvas still needs, in order. Only the two permissions are required; the live
+    /// windows steps remain listed as optional extras.
     var missing: [Item] { items.filter { $0.required && $0.state != .done } }
 
     /// Live windows are set up.
@@ -147,9 +148,7 @@ struct SetupStatus: Equatable, Sendable {
 
     /// One line for Settings.
     var summary: String {
-        guard let first = missing.first else {
-            return screenRecording ? "Everything's set up." : "Live windows are set up. Screen Recording would add desktop widgets."
-        }
+        guard let first = missing.first else { return "Everything's set up." }
         let count = missing.count
         return "\(count) step\(count == 1 ? "" : "s") left, starting with \(first.title.lowercased())."
     }

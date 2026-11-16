@@ -59,8 +59,8 @@ struct BackgroundSpec: Codable, Equatable {
         var level: Int {
             switch self {
             case .off: return 0
-            case .soft: return 3
-            case .deep: return 4
+            case .soft: return 4
+            case .deep: return 6
             }
         }
     }
@@ -125,8 +125,10 @@ struct BackgroundSpec: Codable, Equatable {
     static let `default` = BackgroundSpec()
 
     /// The zoom where the focus curve starts to blur (at or above: sharp) and where it reaches the ceiling.
-    static let focusSharpZoom: CGFloat = 0.9
-    static let focusFullZoom: CGFloat = 0.5
+    /// The band spans the whole pull-away from a window (1:1) out to the map, so the picture softens
+    /// gradually with camera height instead of snapping near the ends.
+    static let focusSharpZoom: CGFloat = 1.0
+    static let focusFullZoom: CGFloat = 0.3
 
     /// 0 at 1:1, 1 fully zoomed out; a smoothstep between, so nothing kinks mid-pinch.
     static func focus(forZoom zoom: CGFloat) -> CGFloat {

@@ -5,9 +5,9 @@ import os
 /// drag would move them), and from inside an entered window, which brings the canvas back first. No
 /// modifier, no key first, and every direction pans, up included. A four-finger *tap* (four fingers
 /// down and up again without moving) shows everything, as Mission Control's swipe does; or, by
-/// Settings › How to use, a quick four-finger *flick* up does, Mission Control's own stroke, told from a
-/// drag up by its speed as the Mac tells them apart (swiped up slowly, Mission Control follows the
-/// fingers instead of opening). Thumb and three fingers spreading apart is Show Desktop, as on the Mac.
+/// Settings › How to use, a four-finger *swipe up* does — any upward stroke, however slow, told from a
+/// pan by its direction (horizontal and diagonal drags still pan; up opens the whole canvas). Thumb and
+/// three fingers spreading apart is Show Desktop, as on the Mac.
 ///
 /// The touches come straight from the trackpad through MultitouchSupport, the private framework Mac
 /// gesture tools read (MiddleClick, BetterTouchTool). There's no public route: AppKit only hands touches
@@ -24,9 +24,14 @@ final class TrackpadPan: @unchecked Sendable {
         /// Finger travel since the last update, in trackpad widths, y down. The content follows it.
         case changed(CGVector)
         case ended
-        /// A four-finger tap, as the fingers lift; or a flick up, mid-drag, after which the pan is over
-        /// with no `ended` to follow.
+        /// A four-finger tap, as the fingers lift: See All, in tap mode only.
         case seeAll
+        /// Swipe-up entry recognized: the canvas comes up and the pull-back follows the finger.
+        case entryBegan
+        /// Swipe-up entry progress t∈[0,1], each frame after entryBegan until the fingers lift.
+        case entryProgress(CGFloat)
+        /// The entry swipe's fingers lifted; the controller commits or cancels from the last progress.
+        case entryEnded
         /// The four fingers spread apart (Show Desktop), once per touch. No pan comes with it.
         case spread
     }
@@ -39,15 +44,37 @@ final class TrackpadPan: @unchecked Sendable {
     /// down (a window's top under the menu bar can't be entered where it is). One within this angle of
     /// vertical stays plumb the same way.
     fileprivate static let axisLock: CGFloat = 22.5 * .pi / 180
-    /// A tap's or flick's four fingers land together: the fourth within this long of the first. A
-    /// finger that joins a three-finger tap (Look Up) or swipe (back, forward) later never makes one.
+    /// A tap's four fingers land together: the fourth within this long of the first. A finger that joins
+    /// a three-finger tap (Look Up) later never makes one. (`entryLanding` is the swipe up's, wider.)
     fileprivate static let tapLanding: CFAbsoluteTime = 0.15
-    /// Centroid rise, in trackpad widths, that makes an upward drag a flick. About two centimetres on
-    /// a built-in trackpad: a short stroke, not a shifting hand.
-    fileprivate static let swipeDistance: CGFloat = 0.12
-    /// A flick covers `swipeDistance` within this long of the drag beginning. Slower than that, the
-    /// fingers are panning, and speeding up later never makes a flick of it.
-    fileprivate static let flickWindow: CFAbsoluteTime = 0.35
+    /// Centroid rise, in trackpad widths, that makes an upward drag a swipe up and starts the entry (t=0).
+    /// About a centimetre and a half on a built-in trackpad: a short stroke, not a shifting hand.
+    /// Provisional (2026-11-16): 0.12 was measured in the tests, not on a hand.
+    fileprivate static let swipeDistance: CGFloat = 0.10
+    /// Further centroid rise, in trackpad widths, that takes the entry from just begun (t=0) to all the
+    /// way in (t=1). About two and a half centimetres on a built-in trackpad: a hand's usual swipe-up
+    /// stroke, so the pull-back follows the hand over the whole of it. Provisional, to be confirmed on
+    /// the device. (0.30 — four centimetres — was longer than a hand swipes: a natural 2–3 cm stroke got
+    /// as far as t≈0.3, under the commit threshold, so the release always went back out.)
+    fileprivate static let entryDistance: CGFloat = 0.19
+    /// How far off vertical a swipe up may lean and still be one. A hand swipes up 20–30° off vertical; a
+    /// deliberate diagonal is 45°. Provisional, to be confirmed on the device. (`axisLock`'s 22.5° held
+    /// the entry to within 22.5° of vertical, so a hand's naturally leaning swipe was read as a diagonal
+    /// pan and only moved the canvas — the A1/A2 failure.)
+    fileprivate static let entryAngle: CGFloat = 35 * .pi / 180
+    /// A hand's four fingers land over a longer spread than a tap's: the fourth within this long of the
+    /// first still makes a swipe up. Wider than `tapLanding` because the entry needs a centimetre and a
+    /// half of upward travel on top, which no three-finger gesture (Look Up, back, forward) makes.
+    /// Provisional, to be confirmed on the device.
+    fileprivate static let entryLanding: CFAbsoluteTime = 0.4
+    /// A frame or two of the four contacts reading as three, this long or shorter, is the trackpad (a
+    /// lifting finger is reported a frame before it goes), not a new touch: the swipe under way goes on.
+    /// Longer than this is the hand. About two frames at 60 Hz.
+    fileprivate static let contactGrace: CFAbsoluteTime = 0.05
+    /// `defaults write com.spacefarm.sunlight TrackpadDiagnostics -bool YES` logs every frame of a swipe
+    /// up — rise, run, angle, landing, entry and t — for measuring a hand on the device. Off by default:
+    /// each frame is a line in the log file.
+    fileprivate static let diagnosticsKey = "TrackpadDiagnostics"
     /// A tap is over, the first finger lifting, within this long of the first one landing. A hand
     /// that rests on the trackpad longer is resting.
     fileprivate static let tapDuration: CFAbsoluteTime = 0.3
@@ -110,7 +137,12 @@ final class TrackpadPan: @unchecked Sendable {
 
     @MainActor private func followSetting() {
         let swipeUp = Settings.seeAllGesture == .swipeUp
-        state.withLock { $0.swipeUpSeesAll = swipeUp }
+        // Temporary: a frame-by-frame log of a swipe up, for measuring a hand on the device.
+        let diagnose = UserDefaults.standard.bool(forKey: TrackpadPan.diagnosticsKey)
+        state.withLock {
+            $0.swipeUpSeesAll = swipeUp
+            $0.diagnose = diagnose
+        }
     }
 
     /// Sunlight on or off (the menu bar switch). Off, the four fingers are the Mac's own again: the
@@ -278,28 +310,94 @@ struct TrackpadRecognizer {
     /// The drag is held level (dy = 0) or plumb (dx = 0), decided as it begins; nil for a free
     /// (diagonal) drag.
     var lock: Lock?
-    /// Settings › How to use: a quick flick up is See All, instead of a tap.
+    /// Settings › How to use: an upward swipe is See All, instead of a tap.
     var swipeUpSeesAll = false
     /// Sunlight is on: the four fingers are the canvas's, and the system's own swipes are held off.
     var active = true
     /// The fingers moved or spread while no drag was under way: not a tap any more.
     var stirred = false
-    /// Where the centroid was and when, as the drag began; a flick is measured from there.
+    /// Where the centroid was as the drag began; an upward swipe is measured from there.
     var dragOrigin: CGPoint?
-    var dragBegan: CFAbsoluteTime = 0
     /// The spread has fired; the rest of the touch does nothing.
     var swiped = false
+    /// A swipe up has opened the canvas's entry: progress is under way until the fingers lift.
+    var entryActive = false
+    /// When the four contacts first read as fewer mid-swipe: the trackpad's own frame or two, or the
+    /// hand leaving. Held for `contactGrace` before the swipe is given up.
+    var contactsMissing: CFAbsoluteTime?
+    /// Every frame of a swipe up in the log, for measuring a hand (see `TrackpadPan.diagnosticsKey`).
+    var diagnose = false
+    /// What the swipe up of this touch has done, for the log (see `Trace`).
+    var trace = Trace()
 
     enum Lock { case level, plumb }
     /// When the first finger of this touch landed; nil with no finger down.
     var touchBegan: CFAbsoluteTime?
-    /// The four fingers landed together (`tapLanding`), so lifting them again soon may be a tap.
-    var landedTogether = false
+    /// How long after the touch's first finger the fourth landed; nil with fewer than four anchored. The
+    /// tap wants `tapLanding` (the four together); the swipe up tolerates `entryLanding` (a hand rolls
+    /// its fingers on over a longer spread, and the stroke it then makes is what tells it from a tap).
+    var landingDelay: CFAbsoluteTime?
+    /// The four landed together (`tapLanding`), so lifting them again soon may be a tap.
+    var landedTogether: Bool { (landingDelay ?? .infinity) <= TrackpadPan.tapLanding }
     /// From four fingers landing until the last one lifts: the system's swipe lasts that long, however
     /// many fingers stay down.
     var fourFingerTouch = false
     /// Read by the event tap.
     var dropDockControlUntil: CFAbsoluteTime = 0
+
+    /// One swipe up, as the log needs it: how long the hand took to land its fingers, how far up it came
+    /// and how upright, whether the entry began and where it got to. Temporary: it exists to measure a
+    /// hand on the device (`TrackpadPan.diagnosticsKey`), and drives nothing.
+    struct Trace {
+        var landing: CFAbsoluteTime = 0
+        var peakRise: CGFloat = 0
+        var peakAngle: CGFloat = 0
+        var began = false
+        var t: CGFloat = 0
+        /// Frames where the trackpad read three contacts and the swipe went on regardless.
+        var drops = 0
+
+        /// `angle` is from horizontal, in radians; `off` is how far from vertical, which is how a swipe
+        /// up is thought of.
+        static func offVertical(_ angle: CGFloat) -> Int {
+            Int((90 - angle * 180 / .pi).rounded())
+        }
+
+        mutating func frame(landing: CFAbsoluteTime, rise: CGFloat, angle: CGFloat) {
+            self.landing = landing
+            if rise > peakRise {
+                peakRise = rise
+                peakAngle = angle
+            }
+        }
+
+        /// "swipe up — landing +0.03s, peak rise 0.152 (25° off vertical) — no entry: rise 0.152 < 0.19",
+        /// or with the entry under way, "… entry to t 0.58 (committed)".
+        var summary: String {
+            let degrees = Trace.offVertical(peakAngle)
+            var line = "swipe up — landing +\(String(format: "%.2f", landing))s, "
+                + "peak rise \(String(format: "%.3f", peakRise)) (\(degrees)° off vertical)"
+            if drops > 0 { line += ", \(drops) three-contact frame(s) kept" }
+            if began {
+                let verdict = t >= EntryFlight.commitThreshold ? "committed" : "back out"
+                return line + ", entry to t \(String(format: "%.2f", t)) (\(verdict))"
+            }
+            if peakRise < TrackpadPan.swipeDistance {
+                return line + " — no entry: rise \(String(format: "%.3f", peakRise)) < "
+                    + "\(String(format: "%.2f", TrackpadPan.swipeDistance))"
+            }
+            let upright = .pi / 2 - TrackpadPan.entryAngle
+            if peakAngle < upright {
+                return line + " — no entry: \(degrees)° off vertical, over "
+                    + "\(Int((TrackpadPan.entryAngle * 180 / .pi).rounded()))°"
+            }
+            if landing > TrackpadPan.entryLanding {
+                return line + " — no entry: landed over \(String(format: "%.2f", landing))s > "
+                    + "\(String(format: "%.2f", TrackpadPan.entryLanding))s"
+            }
+            return line + " — no entry"
+        }
+    }
 
     /// `spread` is the fingers' mean distance from `centroid`, in trackpad widths.
     mutating func update(device: UInt, fingers ids: Set<Int32>, centroid: CGPoint, spread: CGFloat = 0,
@@ -309,21 +407,46 @@ struct TrackpadRecognizer {
         if fourFingerTouch, active { dropDockControlUntil = now + TrackpadPan.dockTail }
         let began = touchBegan ?? now
         if ids.isEmpty { touchBegan = nil } else if touchBegan == nil { touchBegan = now }
-        // A finger landed or lifted: whatever was under way is over. Four fingers that landed together,
+        // A finger lifted, or one landed: what was under way is over. Four fingers that landed together,
         // never moved and lift again at once were a tap.
         guard ids.count == 4 else {
+            // Except a frame or two of three contacts with four fingers still on the trackpad: a lifting
+            // finger is reported a frame before it goes, and the touch is the same touch. Giving up here
+            // would lose the drag's origin and its entry — which a hand's swipe, unlike the tests' four
+            // even fingers, trips constantly — and the swipe could never begin again (A1/A2).
+            let underWay = last != nil || entryActive || dragOrigin != nil
+            if underWay, !ids.isEmpty {
+                guard let since = contactsMissing else {
+                    contactsMissing = now
+                    return []
+                }
+                let missing = now - since
+                guard missing > TrackpadPan.contactGrace else { return [] }
+                if swipeUpSeesAll {
+                    Log.note("Entry diag: \(ids.count) contacts for \(milliseconds(missing)) — "
+                             + "past the grace, the swipe ends here")
+                }
+            }
             let tap = !swipeUpSeesAll && ids.count < 4 && fingers.count == 4 && last == nil && !swiped
                 && !stirred && landedTogether && now - began <= TrackpadPan.tapDuration
-            return reset() + (tap ? [.seeAll] : [])
+            return end() + (tap ? [.seeAll] : [])
+        }
+        if let since = contactsMissing {   // the fourth is back: the same touch, still
+            contactsMissing = nil
+            trace.drops += 1
+            if swipeUpSeesAll {
+                Log.note("Entry diag: four contacts again after \(milliseconds(now - since)) — kept, "
+                         + (entryActive ? "the entry goes on" : "no entry yet"))
+            }
         }
         if ids == fingers, swiped { return [] }
         guard ids == fingers, let from = last ?? anchor else {
-            let phases = reset()
+            let phases = end()
             self.device = device
             fingers = ids
             anchor = centroid
             anchorSpread = spread
-            landedTogether = now - (touchBegan ?? now) <= TrackpadPan.tapLanding
+            landingDelay = now - (touchBegan ?? now)
             return phases
         }
         var travel = CGVector(dx: centroid.x - from.x, dy: from.y - centroid.y)
@@ -343,7 +466,6 @@ struct TrackpadRecognizer {
             guard hypot(travel.dx, travel.dy) >= TrackpadPan.slop else { return [] }
             anchor = nil
             dragOrigin = from
-            dragBegan = now
             let angle = atan2(abs(travel.dy), abs(travel.dx))
             if angle <= TrackpadPan.axisLock {
                 lock = .level
@@ -354,15 +476,40 @@ struct TrackpadRecognizer {
             }
             phases.append(.began)
         }
-        if swipeUpSeesAll, let origin = dragOrigin, landedTogether, now - dragBegan <= TrackpadPan.flickWindow {
-            // Still early enough to be a flick: the whole travel so far, straight up and far enough,
-            // makes one. The pan it interrupts has moved the canvas a little; See All goes on from there.
+        if swipeUpSeesAll, let origin = dragOrigin, let landing = landingDelay,
+           landing <= TrackpadPan.entryLanding {
+            // Any upward swipe opens the canvas, however slow: the whole travel so far, straight up and
+            // far enough, begins the entry. Progress is measured from the recognition threshold, so the
+            // canvas starts at the camera it was on (no jump) and the rest of the stroke drives the
+            // pull-back; the finger coming back down scrubs it out again. The pan it interrupts has moved
+            // the canvas a little; entry goes on from there.
             let rise = centroid.y - origin.y   // the centroid's y goes up the trackpad
             let run = abs(centroid.x - origin.x)
-            if rise >= TrackpadPan.swipeDistance, atan2(rise, run) >= .pi / 2 - TrackpadPan.axisLock {
-                swiped = true
-                last = nil   // the pan is over here; lifting the fingers won't `end` it again
-                return phases + [.seeAll]
+            let angle = atan2(rise, run)
+            let upright = angle >= .pi / 2 - TrackpadPan.entryAngle
+            let recognized = rise >= TrackpadPan.swipeDistance && upright
+            trace.frame(landing: landing, rise: rise, angle: angle)
+            if diagnose {
+                Log.note("Entry diag frame: rise \(String(format: "%.3f", rise)) "
+                         + "run \(String(format: "%.3f", run)) "
+                         + "\(Trace.offVertical(angle))° off vertical "
+                         + "landing +\(String(format: "%.2f", landing))s "
+                         + "\(entryActive ? "entry" : "pan") → \(recognized ? "entry" : "no")")
+            }
+            if recognized || entryActive {
+                let span = TrackpadPan.entryDistance - TrackpadPan.swipeDistance
+                let t = min(max((rise - TrackpadPan.swipeDistance) / span, 0), 1)
+                let first = !entryActive
+                entryActive = true
+                last = centroid   // the pan is over here; lifting the fingers won't `end` it again
+                trace.began = true
+                trace.t = t
+                if first, diagnose {
+                    Log.note("Entry diag: the entry begins — rise \(String(format: "%.3f", rise)) "
+                             + "at \(Trace.offVertical(angle))° off vertical, "
+                             + "landing +\(String(format: "%.2f", landing))s")
+                }
+                return phases + (first ? [.entryBegan, .entryProgress(t)] : [.entryProgress(t)])
             }
         }
         switch lock {
@@ -375,8 +522,20 @@ struct TrackpadRecognizer {
         return phases
     }
 
+    /// The touch is over: log what the swipe up made of it (one line a swipe, `Trace`), then reset.
+    private mutating func end() -> [TrackpadPan.Phase] {
+        if swipeUpSeesAll, trace.peakRise > 0 { Log.note("Entry diag: \(trace.summary)") }
+        return reset()
+    }
+
+    /// `0.017s` as `17ms`, for the log.
+    private func milliseconds(_ seconds: CFAbsoluteTime) -> String {
+        String(format: "%.0fms", seconds * 1000)
+    }
+
     mutating func reset() -> [TrackpadPan.Phase] {
-        let phases: [TrackpadPan.Phase] = last == nil ? [] : [.ended]
+        // An entry's fingers lifting ends the entry, not a pan (entryActive implies last != nil).
+        let phases: [TrackpadPan.Phase] = entryActive ? [.entryEnded] : (last == nil ? [] : [.ended])
         device = nil
         fingers = []
         anchor = nil
@@ -385,7 +544,10 @@ struct TrackpadRecognizer {
         stirred = false
         dragOrigin = nil
         swiped = false
-        landedTogether = false
+        entryActive = false
+        landingDelay = nil
+        contactsMissing = nil
+        trace = Trace()
         anchorSpread = 0
         return phases
     }

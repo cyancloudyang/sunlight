@@ -8,17 +8,8 @@ enum Settings {
         case capture, realWindows
         var title: String { self == .capture ? "Capture proxies" : "Scaled real windows" }
     }
-    /// Without `screenCapture`, always scaled real windows: capture proxies are a feature behind that flag.
-    static var renderer: Renderer {
-        get {
-            if previewForced { return .capture }
-            guard screenCapture else { return .realWindows }
-            let value = ProcessInfo.processInfo.environment["CANVAS_RENDERER"]
-                ?? UserDefaults.standard.string(forKey: "CanvasRenderer") ?? "capture"
-            return Renderer(rawValue: value) ?? .capture
-        }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "CanvasRenderer") }
-    }
+    /// Tablecloth is a snapshot map: always capture proxies, never scaled real windows.
+    static var renderer: Renderer { .capture }
     /// The near-black graphite the canvas starts with when the Mac is dark.
     static let defaultDarkBackground = NSColor(calibratedRed: 0.09, green: 0.09, blue: 0.10, alpha: 1)
     /// The pale grey it starts with when the Mac is light.
@@ -73,6 +64,8 @@ enum Settings {
     private static let tidyOrderKey = "TidyOrder"
     private static let panInertiaKey = "CanvasPanInertia"
     private static let seeAllGestureKey = "CanvasSeeAllGesture"
+    private static let gestureEntryKey = "CanvasGestureEntry"
+    private static let realDesktopKey = "CanvasRealDesktop"
     private static let zoomInertiaKey = "CanvasZoomInertia"
     private static let snapToWindowsKey = "CanvasSnapToWindows"
     private static let rememberCanvasKey = "CanvasRemember"
@@ -262,7 +255,8 @@ enum Settings {
 
     /// The four-finger gesture that shows everything (and, done again on the canvas, goes back into
     /// the last window), as the Mission Control key does. A tap leaves every four-finger drag a pan; a
-    /// swipe up, Mission Control's own gesture, takes the quick upward stroke from panning.
+    /// swipe up, Mission Control's own gesture, takes the quick upward stroke from panning. Swipe up is
+    /// the default, so an upward stroke enters the overview out of the box.
     enum SeeAllGesture: String, CaseIterable, Identifiable {
         case tap, swipeUp
         var id: Self { self }
@@ -271,11 +265,35 @@ enum Settings {
     }
     static let seeAllGestureDidChange = Notification.Name("SunlightSeeAllGestureDidChange")
     static var seeAllGesture: SeeAllGesture {
-        get { SeeAllGesture(rawValue: defaults.string(forKey: seeAllGestureKey) ?? "") ?? .tap }
+        get { SeeAllGesture(rawValue: defaults.string(forKey: seeAllGestureKey) ?? "") ?? .swipeUp }
         set {
             defaults.set(newValue.rawValue, forKey: seeAllGestureKey)
             NotificationCenter.default.post(name: seeAllGestureDidChange, object: nil)
         }
+    }
+
+    static let gestureEntryDidChange = Notification.Name("CanvasGestureEntryDidChange")
+
+    /// Entering the canvas by the four-finger swipe up follows the hand: the pull-back is driven by the
+    /// stroke (1:1), and the windows on screen fly from where they really are to where the canvas keeps
+    /// them, so the stacked desktop doesn't jump into a tidy canvas. On by default; off, entry is the
+    /// plain See All flight it was before, and the swipe is a pan until it is read as See All.
+    static var gestureEntry: Bool {
+        get { defaults.object(forKey: gestureEntryKey) == nil ? true : defaults.bool(forKey: gestureEntryKey) }
+        set {
+            defaults.set(newValue, forKey: gestureEntryKey)
+            NotificationCenter.default.post(name: gestureEntryDidChange, object: nil)
+        }
+    }
+
+    /// Settings › How to use › Show Desktop: spreading four fingers (or F11) reveals the real, interactive
+    /// macOS desktop — the canvas steps aside and the system's own Show Desktop runs — instead of flying
+    /// to the canvas's desktop snapshot. Off by default: the snapshot needs nothing of the system, while
+    /// the real desktop needs Show Desktop enabled in System Settings › Keyboard › Keyboard Shortcuts ›
+    /// Mission Control (F11 by default), which the canvas posts as a key. See `ShowDesktopPolicy`.
+    static var realDesktopOnShowDesktop: Bool {
+        get { defaults.object(forKey: realDesktopKey) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: realDesktopKey) }
     }
 
     // MARK: Inertia
@@ -305,6 +323,16 @@ enum Settings {
     static var rememberCanvas: Bool {
         get { defaults.object(forKey: rememberCanvasKey) == nil || defaults.bool(forKey: rememberCanvasKey) }
         set { defaults.set(newValue, forKey: rememberCanvasKey) }
+    }
+
+    private static let didAutoArrangeKey = "CanvasDidAutoArrange"
+
+    /// The one-time auto-arrange has happened. The first canvas after this feature shipped groups its
+    /// windows by app once — a fresh canvas, or a saved layout from before that was never arranged — then
+    /// this is set and the user's moves win. Off until then, so an existing layout is tidied once too.
+    static var didAutoArrange: Bool {
+        get { defaults.bool(forKey: didAutoArrangeKey) }
+        set { defaults.set(newValue, forKey: didAutoArrangeKey) }
     }
 
     private static let sunlightOnKey = "SunlightOn"
@@ -355,6 +383,11 @@ enum Settings {
 
     private static let minimapKey = "Minimap"
 
+    static var tableclothMapEntries: Int {
+        get { UserDefaults.standard.integer(forKey: "TableclothMapEntries") }
+        set { UserDefaults.standard.set(newValue, forKey: "TableclothMapEntries") }
+    }
+
     /// Whether the minimap is shown. On until it's hidden.
     static var showMinimap: Bool {
         get { UserDefaults.standard.object(forKey: minimapKey) == nil || UserDefaults.standard.bool(forKey: minimapKey) }
@@ -401,6 +434,28 @@ enum Settings {
 
     /// Posted when Settings › Canvas › Zoom level is switched: the canvas shows or hides the readout.
     static let zoomReadoutDidChange = Notification.Name("CanvasZoomReadoutDidChange")
+
+    // MARK: Summoning the canvas
+
+    private static let summonBackupKeyCode = "SummonBackupKey"
+
+    /// A second key that summons the canvas, for keyboards or setups where F3 and the Mission Control key
+    /// don't reach it (remapped, or another app's tap takes them): a key code, no modifier — as the Mac's
+    /// own key. Nil until one is set: `defaults write <bundle id> SummonBackupKey -int <code>`, or the
+    /// `--summon-key` flag. F3 keeps working either way.
+    static var summonBackupKey: Int64? {
+        get {
+            let stored = UserDefaults.standard.integer(forKey: summonBackupKeyCode)
+            return stored > 0 ? Int64(stored) : nil
+        }
+        set {
+            if let newValue, newValue > 0 {
+                UserDefaults.standard.set(Int(newValue), forKey: summonBackupKeyCode)
+            } else {
+                UserDefaults.standard.removeObject(forKey: summonBackupKeyCode)
+            }
+        }
+    }
 
     // MARK: The desktop
 
@@ -584,9 +639,17 @@ enum Settings {
         !liveWindowsEverLoaded && !screenCapture
     }
 
-    /// Whether the capture renderer streams at all: in screen capture mode and in preview mode. Otherwise
-    /// it's only the stand-in while live windows come back, and every window and widget is a still.
-    static var capturesStream: Bool { screenCapture || previewMode }
+    /// Tablecloth is a snapshot map: it never streams. Every window is a still.
+    static var capturesStream: Bool { false }
+
+    private static let snapshotRotationKey = "TableclothSnapshotRotation"
+
+    /// The idle snapshot rotation: while the map sits still, one window refreshes every few ticks.
+    /// Off by default — an idle map costs nothing; turn it on for a slowly self-updating overview.
+    static var snapshotRotation: Bool {
+        get { defaults.bool(forKey: snapshotRotationKey) }
+        set { defaults.set(newValue, forKey: snapshotRotationKey) }
+    }
 
     // MARK: Capture method
 
@@ -642,7 +705,7 @@ enum CaptureMethod: String, CaseIterable {
 final class SettingsWindowController: NSWindowController {
     /// The panes, in toolbar order.
     enum Tab: String, CaseIterable, Identifiable {
-        case general, canvas, background, windows, motion, howToUse, liveWindows, experimental
+        case general, canvas, background, windows, motion, howToUse, experimental
 
         var id: String { rawValue }
 
@@ -654,7 +717,6 @@ final class SettingsWindowController: NSWindowController {
             case .windows: return "Windows"
             case .motion: return "Motion"
             case .howToUse: return "How to use"
-            case .liveWindows: return "Live Windows"
             case .experimental: return "Experimental"
             }
         }
@@ -668,7 +730,6 @@ final class SettingsWindowController: NSWindowController {
             case .windows: return "macwindow"
             case .motion: return "sparkles"
             case .howToUse: return "questionmark.circle"
-            case .liveWindows: return "bolt"
             case .experimental: return "flask"
             }
         }
@@ -703,34 +764,6 @@ final class SettingsWindowController: NSWindowController {
         get { model.onTutorial }
         set { model.onTutorial = newValue }
     }
-    /// Settings › Live Windows › Reload…, and whether it has anything to do.
-    var onReloadLiveWindows: (() -> Void)? {
-        get { model.onReloadLiveWindows }
-        set { model.onReloadLiveWindows = newValue }
-    }
-    var canReloadLiveWindows: (() -> Bool)? {
-        get { model.canReloadLiveWindows }
-        set { model.canReloadLiveWindows = newValue }
-    }
-    /// Settings › General › Take over the Mac: on asks for consent (a sheet on the canvas), off releases
-    /// and quits, as the menu's Release the Mac… does.
-    var isTakenOver: (() -> Bool)? {
-        get { model.isTakenOver }
-        set { model.isTakenOver = newValue }
-    }
-    var onTakeOver: (() -> Void)? {
-        get { model.onTakeOver }
-        set { model.onTakeOver = newValue }
-    }
-    var onRelease: (() -> Void)? {
-        get { model.onRelease }
-        set { model.onRelease = newValue }
-    }
-    /// Settings › General › Uninstall Sunlight…
-    var onUninstall: (() -> Void)? {
-        get { model.onUninstall }
-        set { model.onUninstall = newValue }
-    }
     /// Settings › Canvas › Minimap, Desktop files: the canvas shows or hides them.
     var onMinimapChange: ((Bool) -> Void)? {
         get { model.onMinimapChange }
@@ -751,10 +784,10 @@ final class SettingsWindowController: NSWindowController {
         set { model.onCheckForUpdates = newValue }
     }
 
-    init(background: BackgroundModel, onRendererChange: @escaping (Settings.Renderer) -> Void, onSetup: @escaping () -> Void) {
+    init(background: BackgroundModel) {
         // Read before the tabs exist: adding the first one selects it, which records it as the last pane.
         let last = Settings.settingsPane.flatMap(Tab.init(remembered:)) ?? .general
-        let model = SettingsModel(background: background, onRendererChange: onRendererChange, onSetup: onSetup)
+        let model = SettingsModel(background: background)
         self.model = model
         let tabs = SettingsTabController(model: model)
         self.tabs = tabs
@@ -773,10 +806,8 @@ final class SettingsWindowController: NSWindowController {
         window.delegate = self
         window.contentViewController = tabs
         window.setContentSize(Self.paneSize)
-        model.window = window
         model.selectTab = { [weak tabs] in tabs?.select($0) }
         tabs.select(last)
-        model.refresh()
         placeAtTopRight()
     }
 
@@ -804,7 +835,6 @@ final class SettingsWindowController: NSWindowController {
 
     /// The controls as the settings are now: an alert's "do this every time" can change one meanwhile.
     override func showWindow(_ sender: Any?) {
-        model.refresh()
         if window?.isVisible != true { placeAtTopRight() }
         // No Dock icon: opened from the menu bar icon, Sunlight isn't the active app until it says so.
         NSApp.activate()
@@ -921,8 +951,7 @@ private final class SettingsTabController: NSTabViewController {
 }
 
 
-/// The settings window's state: what the slow checks found (the live-window probe,
-/// setup progress), and the callbacks into the app. The values themselves live in `Settings`; the
+/// The settings window's state and the callbacks into the app. The values themselves live in `Settings`; the
 /// views bind to them through `bind`, which tells SwiftUI a change is coming so every row that depends
 /// on the value (a slider that greys out, a picker that appears) follows.
 @MainActor
@@ -930,8 +959,6 @@ final class SettingsModel: ObservableObject {
     typealias Tab = SettingsWindowController.Tab
 
     let background: BackgroundModel
-    let onRendererChange: (Settings.Renderer) -> Void
-    let onSetup: () -> Void
     var onTryPlacing: ((PlacementGuide.Scope) -> Void)?
     var onTutorial: (() -> Void)?
     /// Settings › How to use's chapter: the window's ⌘? and the ? in Settings › Windows pick one.
@@ -940,8 +967,6 @@ final class SettingsModel: ObservableObject {
     var selectTab: ((Tab) -> Void)?
     var onMinimapChange: ((Bool) -> Void)?
     var onDesktopFilesChange: ((Bool) -> Void)?
-    var onReloadLiveWindows: (() -> Void)?
-    var canReloadLiveWindows: (() -> Bool)?
     var isTakenOver: (() -> Bool)?
     var onTakeOver: (() -> Void)?
     var onRelease: (() -> Void)?
@@ -949,31 +974,9 @@ final class SettingsModel: ObservableObject {
     /// The canvas as the desktop map draws it.
     var desktopMap: (() -> DesktopMapSnapshot?)?
     @Published var onCheckForUpdates: (() -> Void)?
-    /// The settings window, for the sheets Diagnose… puts up.
-    weak var window: NSWindow?
 
-    /// Live windows: answering, loadable, or not to be had, in a line.
-    @Published var liveStatus = LiveStatus(state: .checking, text: "Checking live windows…")
-    @Published var setupSummary = "Checking setup…"
-    /// Whether setup's progress has come back from its first check: until then there are no steps to count.
-    @Published var setupChecked = false
-    @Published var setupDone = 0
-    @Published var setupTotal = 1
-    @Published var setupLog = ""
-    @Published var showSetupLog = false {
-        didSet { if showSetupLog { readSetupLog() } }
-    }
-
-    struct LiveStatus {
-        enum State { case checking, live, preview, loadable, unavailable }
-        var state: State
-        var text: String
-    }
-
-    init(background: BackgroundModel, onRendererChange: @escaping (Settings.Renderer) -> Void, onSetup: @escaping () -> Void) {
+    init(background: BackgroundModel) {
         self.background = background
-        self.onRendererChange = onRendererChange
-        self.onSetup = onSetup
     }
 
     /// A binding onto a `Settings` value, with `objectWillChange` so dependent rows redraw.
@@ -984,56 +987,6 @@ final class SettingsModel: ObservableObject {
         })
     }
 
-    /// Everything that takes a round trip: the live-window probe and setup's progress, off the main
-    /// thread, as before.
-    func refresh() {
-        objectWillChange.send()
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let status = SetupStatus.current()
-            let progress = SetupFlow.progress(for: status, mac: SetupFlow.Mac.current())
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.setupSummary = status.summary
-                self.setupTotal = max(1, progress.total)
-                self.setupDone = progress.done
-                self.setupChecked = true
-                if self.showSetupLog { self.readSetupLog() }
-            }
-        }
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let available = LiveWindowsConnection.probe()
-            // Not loaded but loadable: choosing live windows loads the addition, with a password prompt if need be.
-            let loadable = AdditionReloader.helperPath != nil
-            DispatchQueue.main.async {
-                self?.liveStatus = Self.liveStatus(available: available, loadable: loadable,
-                                                   preview: Settings.previewMode, capture: Settings.screenCapture)
-            }
-        }
-    }
-
-    static func liveStatus(available: Bool, loadable: Bool, preview: Bool, capture: Bool) -> LiveStatus {
-        if available {
-            return LiveStatus(state: .live, text: "Live windows are on. No Screen Recording needed.")
-        }
-        if loadable {
-            return preview
-                ? LiveStatus(state: .preview, text: "Preview mode: windows are pictures until setup is done.")
-                : LiveStatus(state: .loadable, text: "Live windows aren't loaded yet. Set Up Sunlight loads them.")
-        }
-        let missing = "the helper is missing"
-        if capture { return LiveStatus(state: .unavailable, text: "Live windows unavailable: \(missing). Using screen capture.") }
-        if preview { return LiveStatus(state: .unavailable, text: "Preview mode: \(missing).") }
-        return LiveStatus(state: .unavailable, text: "Live windows unavailable: \(missing).")
-    }
-
-    private func readSetupLog() {
-        let text = SetupJournal.read()
-        setupLog = text.isEmpty ? "Nothing yet. Set Up Sunlight writes here." : text
-    }
-
-    /// Whether live windows can be chosen as the renderer: loaded, or loadable on the way.
-    var liveSelectable: Bool { liveStatus.state == .live || liveStatus.state == .loadable || liveStatus.state == .preview }
-
     /// Off while the strip is up: the canvas puts the free arrangement back first, then the flag goes.
     func setStripModeEnabled(_ on: Bool) {
         objectWillChange.send()
@@ -1041,16 +994,6 @@ final class SettingsModel: ObservableObject {
             NotificationCenter.default.post(name: Settings.stripModeRequested, object: NSNumber(value: false))
         }
         Settings.stripModeEnabled = on
-    }
-
-    /// The pane's one choice: live windows, or screen capture. Screen capture is the mode with the capture
-    /// renderer; live windows turns the mode off, so nothing streams while the add-on comes back either.
-    func setRenderer(_ renderer: Settings.Renderer) {
-        objectWillChange.send()
-        Settings.screenCapture = renderer == .capture
-        Settings.renderer = renderer
-        onRendererChange(Settings.renderer)
-        refresh()
     }
 
     func setMagnetism(_ on: Bool) {
@@ -1119,7 +1062,6 @@ private struct SettingsPane: View {
         case .windows: WindowsPane(model: model)
         case .motion: MotionPane(model: model)
         case .howToUse: HowToUsePane(model: model)
-        case .liveWindows: LiveWindowsPane(model: model)
         case .experimental: ExperimentalPane(model: model)
         }
     }
@@ -1223,20 +1165,12 @@ private struct GeneralPane: View {
                         .frame(width: 56, height: 56)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text(versionTitle).font(.headline)
-                            StatusPill(text: takenOver ? "Taking over the Mac" : "Not taking over", colour: takenOver ? .green : .secondary)
-                        }
-                        Text("Replaces the Dock, ⌘Tab and Mission Control. Off puts them back.")
+                        Text(versionTitle).font(.headline)
+                        Text("A snapshot map of your Mac’s windows. Nothing here changes system preferences or login items.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer(minLength: 8)
-                    Toggle("Take over the Mac", isOn: model.bind({ model.isTakenOver?() == true }, { on in
-                        if on { model.onTakeOver?() } else { model.onRelease?() }
-                    }))
-                    .labelsHidden()
                 }
                 .padding(.vertical, 4)
             }
@@ -1266,20 +1200,10 @@ private struct GeneralPane: View {
                     SectionHeader(title: "Updates")
                 }
             }
-            Section {
-                LabeledContent {
-                    Button("Uninstall…") { model.onUninstall?() }
-                } label: {
-                    RowLabel(title: "Uninstall Sunlight",
-                             subtitle: "Undoes setup and moves Sunlight to the Trash.")
-                }
-            }
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
     }
-
-    private var takenOver: Bool { model.isTakenOver?() == true }
 
     private var versionTitle: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
@@ -1610,273 +1534,6 @@ struct ShortcutsPane: View {
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
-    }
-}
-
-// MARK: - Live windows
-
-/// How windows reach the canvas: the real ones through the Dock add-on, or pictures of them; how far
-/// setup has come, drawn as the three stages of the way with a mark on each.
-private struct LiveWindowsPane: View {
-    @ObservedObject var model: SettingsModel
-
-    var body: some View {
-        Form {
-            Section {
-                VStack(spacing: 12) {
-                    HStack(alignment: .top, spacing: 0) {
-                        PipelineStage(title: "Your windows", line: "the real ones", mark: .done) {
-                            MiniWindowsPicture(windows: [CGRect(x: 10, y: 10, width: 34, height: 26), CGRect(x: 40, y: 26, width: 34, height: 26)])
-                        }
-                        PipelineArrow()
-                        PipelineStage(title: "Dock add-on", line: addOnLine, mark: addOnMark) {
-                            DockPicture()
-                        }
-                        PipelineArrow()
-                        PipelineStage(title: "The canvas", line: canvasLine, mark: canvasMark) {
-                            MiniWindowsPicture(windows: [CGRect(x: 8, y: 8, width: 22, height: 16), CGRect(x: 34, y: 14, width: 26, height: 18),
-                                                         CGRect(x: 14, y: 34, width: 20, height: 16), CGRect(x: 52, y: 36, width: 26, height: 18)],
-                                               captured: Settings.renderer == .capture)
-                        }
-                    }
-                    HStack(spacing: 8) {
-                        StatusPill(text: statusTitle, colour: statusColor)
-                        Text(model.liveStatus.text)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                }
-                .padding(.vertical, 6)
-                .accessibilityElement(children: .combine)
-            }
-            Section {
-                TileRow {
-                    PictureTile(title: "Live windows", selected: Settings.renderer == .realWindows, width: 200) {
-                        model.setRenderer(.realWindows)
-                    } picture: {
-                        ModePicture(live: true)
-                    }
-                    // Can't load live windows here: screen capture stays, but a Mac showing stills may still pick it.
-                    .disabled(!model.liveSelectable)
-                    PictureTile(title: "Screen capture", selected: Settings.renderer == .capture, width: 200) {
-                        model.setRenderer(.capture)
-                    } picture: {
-                        ModePicture(live: false)
-                    }
-                }
-                .padding(.vertical, 4)
-                .accessibilityLabel("Mode")
-            } header: {
-                SectionHeader(title: "Mode", detail: rendererDetail)
-            }
-            Section {
-                LabeledContent {
-                    Button("Set Up…") { model.onSetup() }
-                } label: {
-                    RowLabel(title: "Set Up Sunlight", subtitle: setupSubtitle)
-                }
-                LabeledContent {
-                    Button("Reload…") { model.onReloadLiveWindows?() }
-                        .disabled(model.canReloadLiveWindows?() != true)
-                } label: {
-                    RowLabel(title: "Reload live windows", subtitle: "After a Dock restart.")
-                }
-                LabeledContent {
-                    Button("Diagnose…") { SetupDiagnose.run(from: model.window) }
-                } label: {
-                    RowLabel(title: "Diagnose", subtitle: "Copies a report for a bug.")
-                }
-                DisclosureGroup(isExpanded: $model.showSetupLog) {
-                    ScrollView {
-                        Text(model.setupLog)
-                            .font(.system(size: 10, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(height: 140)
-                } label: {
-                    RowLabel(title: "Setup log", subtitle: "What setup did, and when.")
-                }
-            } header: {
-                SectionHeader(title: "Setup",
-                              detail: "Live windows need System Integrity Protection partly off.")
-            }
-        }
-        .formStyle(.grouped)
-        .toggleStyle(.switch)
-    }
-
-    private var setupSubtitle: String {
-        guard model.setupChecked else { return "Checking…" }
-        return model.setupDone >= model.setupTotal ? "All done." : "\(model.setupDone) of \(model.setupTotal) steps done."
-    }
-
-    private var rendererDetail: String {
-        if !model.liveSelectable {
-            return Settings.renderer == .capture
-                ? "Live windows can’t load on this Mac."
-                : "Live windows can’t load here. Pick Screen capture."
-        }
-        if Settings.previewMode { return "Screen capture until setup is done." }
-        return "Screen capture uses more memory and power."
-    }
-
-    private var addOnLine: String {
-        switch model.liveStatus.state {
-        case .checking: return "checking…"
-        case .live: return "loaded"
-        case .preview, .loadable: return "not loaded yet"
-        case .unavailable: return "missing"
-        }
-    }
-
-    private var addOnMark: PipelineMark {
-        switch model.liveStatus.state {
-        case .checking: return .pending
-        case .live: return .done
-        case .preview, .loadable: return .todo
-        case .unavailable: return .failed
-        }
-    }
-
-    private var canvasLine: String {
-        if model.liveStatus.state == .live && Settings.renderer == .realWindows { return "live, scaled" }
-        if Settings.capturesStream { return "pictures, streamed" }
-        return model.liveStatus.state == .checking ? "checking…" : "still pictures"
-    }
-
-    private var canvasMark: PipelineMark {
-        if model.liveStatus.state == .checking { return .pending }
-        if model.liveStatus.state == .live && Settings.renderer == .realWindows { return .done }
-        return Settings.capturesStream ? .todo : .failed
-    }
-
-    private var statusTitle: String {
-        switch model.liveStatus.state {
-        case .checking: return "Checking…"
-        case .live: return "Live windows on"
-        case .preview: return "Preview mode"
-        case .loadable: return "Not loaded"
-        case .unavailable: return "Unavailable"
-        }
-    }
-
-    private var statusColor: Color {
-        switch model.liveStatus.state {
-        case .checking: return .secondary
-        case .live: return .green
-        case .preview, .loadable: return .orange
-        case .unavailable: return .red
-        }
-    }
-}
-
-/// One stage on the way from real windows to the canvas: a picture with a mark on its corner, its
-/// name and a line under it.
-/// The mark on a stage's corner. Lives outside `PipelineStage` because a type nested in a generic
-/// can't be named without the generic's argument.
-enum PipelineMark { case done, todo, failed, pending }
-
-struct PipelineStage<Picture: View>: View {
-    let title: String
-    let line: String
-    let mark: PipelineMark
-    @ViewBuilder let picture: () -> Picture
-
-    var body: some View {
-        VStack(spacing: 6) {
-            picture()
-                .frame(width: 120, height: 64)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-                .overlay(alignment: .topTrailing) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 16, weight: .semibold))
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.white, colour)
-                        .background(Circle().fill(Color(nsColor: .controlBackgroundColor)).padding(1))
-                        .offset(x: 6, y: -6)
-                }
-            Text(title).font(.subheadline).fontWeight(.semibold)
-            Text(line).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title): \(line)")
-    }
-
-    private var symbol: String {
-        switch mark {
-        case .done: return "checkmark.circle.fill"
-        case .todo: return "exclamationmark.circle.fill"
-        case .failed: return "xmark.circle.fill"
-        case .pending: return "ellipsis.circle.fill"
-        }
-    }
-
-    private var colour: Color {
-        switch mark {
-        case .done: return .green
-        case .todo: return .orange
-        case .failed: return .red
-        case .pending: return .gray
-        }
-    }
-}
-
-private struct PipelineArrow: View {
-    var body: some View {
-        Image(systemName: "arrow.right")
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .frame(height: 64)
-            .accessibilityHidden(true)
-    }
-}
-
-/// A few windows on the sky, at the tile's size; captured ones under a film's scan lines.
-struct MiniWindowsPicture: View {
-    let windows: [CGRect]
-    var captured = false
-
-    var body: some View {
-        Canvas { ctx, drawn in
-            let screen = SettingsPictures.screen(in: &ctx, drawn: drawn, base: SettingsPictures.tileSize, bezel: 0)
-            for r in windows { MiniCanvasPicture.drawWindow(r, acted: false, in: &ctx) }
-            if captured {
-                var y = screen.minY + 1
-                while y < screen.maxY {
-                    ctx.fill(Path(CGRect(x: screen.minX, y: y, width: screen.width, height: 1)), with: .color(.black.opacity(0.09)))
-                    y += 3
-                }
-            }
-        }
-    }
-}
-
-/// The Dock, with Sunlight's rays among its icons.
-struct DockPicture: View {
-    var body: some View {
-        Canvas { ctx, drawn in
-            let base = SettingsPictures.tileSize
-            let k = drawn.width / base.width
-            ctx.scaleBy(x: k, y: k)
-            let whole = CGRect(origin: .zero, size: base)
-            ctx.fill(Path(whole), with: .linearGradient(Gradient(colors: [Color(white: 0.92), Color(white: 0.8)]),
-                                                        startPoint: CGPoint(x: whole.midX, y: whole.minY), endPoint: CGPoint(x: whole.midX, y: whole.maxY)))
-            let bar = CGRect(x: 14, y: base.height - 24, width: base.width - 28, height: 17)
-            var shadowed = ctx
-            shadowed.addFilter(.shadow(color: .black.opacity(0.2), radius: 3, y: 1))
-            shadowed.fill(Path(roundedRect: bar, cornerRadius: 5, style: .continuous), with: .color(.white.opacity(0.7)))
-            for i in 0..<4 {
-                let r = CGRect(x: bar.minX + 5 + CGFloat(i) * 15, y: bar.minY + 3.5, width: 10, height: 10)
-                let colour = i == 2 ? SettingsPictures.sun : SettingsPictures.apps[i]
-                ctx.fill(Path(roundedRect: r, cornerRadius: 3, style: .continuous), with: .color(colour))
-                if i == 2 { ctx.stroke(Path(roundedRect: r.insetBy(dx: -1.5, dy: -1.5), cornerRadius: 4), with: .color(.white), lineWidth: 1.2) }
-            }
-        }
     }
 }
 

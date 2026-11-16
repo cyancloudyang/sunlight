@@ -22,6 +22,7 @@ final class Desk {
     /// Last run's canvas, and the windows of it still to come back: a window goes back where it was
     /// on whichever display's canvas it turns up.
     private(set) var remembered: Layout?
+    var bookmarks: [String: Layout.DisplayCamera] = [:]
     var unclaimed: [Layout.Entry] = []
     private(set) var rememberedUntil = Date.distantPast
 
@@ -33,6 +34,7 @@ final class Desk {
     init() {
         if Settings.rememberCanvas, let last = LayoutStore.remembered {
             remembered = last
+            bookmarks = last.bookmarks ?? [:]
             unclaimed = last.entries
             rememberedUntil = Date().addingTimeInterval(CanvasController.rememberedWindow)
         }
@@ -74,9 +76,8 @@ final class Desk {
 
     private func add(_ display: Display, lead: Bool) {
         let c = CanvasController(display: display, desk: self, lead: lead)
-        c.onSetUp = onSetUp
         c.onHowToUse = onHowToUse
-        c.takeover = takeover
+        c.input = input
         c.permissionsAskedElsewhere = permissionsAskedElsewhere
         c.isSetupShowing = isSetupShowing
         c.background.onCustomise = onCustomiseBackground
@@ -89,7 +90,6 @@ final class Desk {
 
     // MARK: What the app sets
 
-    var onSetUp: (() -> Void)? { didSet { canvases.forEach { $0.onSetUp = onSetUp } } }
     /// ⌘? anywhere while taken over: Settings › How to use.
     var onHowToUse: (() -> Void)? { didSet { canvases.forEach { $0.onHowToUse = onHowToUse } } }
     /// A display came or went (after `reviewDisplays`).
@@ -102,7 +102,7 @@ final class Desk {
         get { lead.onFirstSync }
         set { lead.onFirstSync = newValue }
     }
-    weak var takeover: TakeoverMode? { didSet { canvases.forEach { $0.takeover = takeover } } }
+    weak var input: CanvasInput? { didSet { canvases.forEach { $0.input = input } } }
     var permissionsAskedElsewhere = false { didSet { canvases.forEach { $0.permissionsAskedElsewhere = permissionsAskedElsewhere } } }
     var isSetupShowing = false { didSet { canvases.forEach { $0.isSetupShowing = isSetupShowing } } }
 
@@ -225,6 +225,13 @@ final class Desk {
                 pointed.trackpadPan(phase)
             }
             panning = nil
+        case .entryBegan, .entryProgress:
+            // The swipe began on a canvas (a panning one) or, with no pan under way, on the one under
+            // the pointer: the same rule as See All, so the stroke's whole life stays on one canvas.
+            (panning ?? pointed).trackpadPan(phase)
+        case .entryEnded:
+            (panning ?? pointed).trackpadPan(phase)
+            panning = nil
         case .spread:
             current.trackpadPan(phase)
         }
@@ -237,6 +244,7 @@ final class Desk {
     func toggleStripMode() { current.toggleStripMode() }
     func togglePip() { current.togglePipCommand() }
     func toggleMinimap() { current.toggleMinimap() }
+    func showControlHints() { current.showControlHints() }
     func toggleDesktopFloor() { current.toggleDesktopFloor() }
     func showDesktop() { current.showDesktop() }
     func moveToDisplay(step: Int) { current.moveToDisplay(step: step) }
@@ -283,6 +291,12 @@ final class Desk {
 
     var paused: Bool { lead.paused }
 
+    /// A permission grant or revocation made while Sunlight is running: every canvas answers it, so the
+    /// map doesn't keep photographing windows it can no longer see.
+    func permissionsChanged(_ change: PermissionGate.Change) {
+        canvases.forEach { $0.mapPermissionChanged(change) }
+    }
+
     func setPaused(_ paused: Bool) {
         // The lead last on the way back: its `show` activates, and the others are up by then.
         for c in canvases.dropFirst() { c.setPaused(paused, showing: false) }
@@ -291,24 +305,34 @@ final class Desk {
 
     func shutdown() { canvases.forEach { $0.shutdown() } }
 
+    /// Before quitting: a window in use goes back to where it was, on every display.
+    func prepareForTermination() { canvases.forEach { $0.prepareForTermination() } }
+
     /// Writes every display's canvas down for the next launch, as one: the windows of all of them, each
-    /// display's camera by its UUID, and last run's windows that haven't come back yet.
+    /// display's camera by its UUID, and last run's windows that haven't come back yet. A window in use is
+    /// written down where it was on the map, with the camera it was entered from: the visit's grown rect and
+    /// focus camera are a picture, not a place (`CanvasController.rememberedRect`).
     func remember() {
-        guard Settings.rememberCanvas, let leadPart = lead.rememberedPart else { return }
+        guard Settings.rememberCanvas, lead.rememberedPart != nil else { return }
         if Date() >= rememberedUntil { unclaimed = [] }
-        var proxies = leadPart.proxies
-        var groups = leadPart.groups
+        var proxies: [WindowProxy] = []
+        var groups: [CGWindowID: Int] = [:]
+        var rects: [CGWindowID: CGRect] = [:]
         var cameras: [String: Layout.DisplayCamera] = [:]
         for c in canvases {
-            cameras[c.display.uuid] = Layout.displayCamera(c.view.camera, viewSize: c.view.bounds.size)
-            guard c !== lead, let part = c.rememberedPart else { continue }
+            cameras[c.display.uuid] = Layout.displayCamera(c.rememberedCamera, viewSize: c.view.bounds.size)
+            guard let part = c.rememberedPart else { continue }
+            for p in part.proxies { rects[p.windowID] = c.rememberedRect(of: p) }
             // Group numbers count from 0 on every canvas.
             let offset = (groups.values.max() ?? -1) + 1
             proxies += part.proxies
             for (id, g) in part.groups { groups[id] = g + offset }
         }
-        var layout = Layout(name: "", proxies: proxies, camera: lead.view.camera, viewSize: lead.view.bounds.size, groups: groups)
+        var layout = Layout(name: "", proxies: proxies, camera: lead.rememberedCamera,
+                            viewSize: lead.view.bounds.size, groups: groups,
+                            frame: { rects[$0.windowID] ?? $0.worldRect })
         if canvases.count > 1 { layout.cameras = cameras }
+        layout.bookmarks = bookmarks.isEmpty ? nil : bookmarks
         layout.entries = unclaimed + layout.entries
         LayoutStore.remember(layout)
     }

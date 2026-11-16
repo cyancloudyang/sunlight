@@ -32,7 +32,7 @@ enum SetupDiagnose {
         var system: String
         var mac: SetupFlow.Mac
         var status: SetupStatus
-        /// `StageManager.describeCurrent()`: Sunlight needs it off.
+        /// `StageManager.describeCurrent()`: read only, and Sunlight changes nothing about it.
         var stageManager = "off"
         /// The `--renderer-status` lines about the renderer.
         var renderer: String

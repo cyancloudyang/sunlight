@@ -13,6 +13,16 @@ final class WindowSyncTests: XCTestCase {
                            listed: listed, last: last, sizeHeld: sizeHeld)
     }
 
+    func testInitialWindowUsesPhysicalFrameAtLaunchCamera() async {
+        await MainActor.run {
+            let frame = CGRect(x: -300, y: 140, width: 840, height: 620)
+            let info = WindowInfo(id: 9001, pid: getpid(), layer: 0, bounds: frame, title: "New", alpha: 1)
+            let proxy = WindowProxy(info: info, camera: Camera(), scale: 2)
+            XCTAssertEqual(proxy.worldRect, frame)
+            XCTAssertEqual(proxy.lastRealFrame, frame)
+        }
+    }
+
     func testAnUnchangedFrameChangesNothing() {
         XCTAssertEqual(verdict(listed: last), .keep)
         XCTAssertEqual(verdict(owner: .user, listed: last), .keep)

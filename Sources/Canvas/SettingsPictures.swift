@@ -489,31 +489,6 @@ struct AppearancePicture: View {
     }
 }
 
-/// Live windows (the real thing) or screen capture (pictures of them, drawn with a film's scan lines).
-struct ModePicture: View {
-    let live: Bool
-
-    var body: some View {
-        Canvas { ctx, drawn in
-            let screen = SettingsPictures.screen(in: &ctx, drawn: drawn, base: SettingsPictures.tileSize, bezel: 0)
-            MiniCanvasPicture.drawWindow(CGRect(x: 10, y: 9, width: 34, height: 26), acted: live, in: &ctx)
-            MiniCanvasPicture.drawWindow(CGRect(x: 48, y: 19, width: 36, height: 28), acted: false, in: &ctx)
-            if !live {
-                var y = screen.minY + 1
-                while y < screen.maxY {
-                    ctx.fill(Path(CGRect(x: screen.minX, y: y, width: screen.width, height: 1)), with: .color(.black.opacity(0.09)))
-                    y += 3
-                }
-                // The capture's frame counter.
-                let box = CGRect(x: screen.maxX - 26, y: screen.minY + 4, width: 22, height: 10)
-                ctx.fill(Path(roundedRect: box, cornerRadius: 3), with: .color(.black.opacity(0.55)))
-                ctx.fill(Path(ellipseIn: CGRect(x: box.minX + 4, y: box.minY + 3, width: 4, height: 4)), with: .color(Color(red: 1, green: 0.25, blue: 0.2)))
-                ctx.fill(Path(roundedRect: CGRect(x: box.minX + 11, y: box.minY + 4, width: 7, height: 2), cornerRadius: 1), with: .color(.white.opacity(0.8)))
-            }
-        }
-    }
-}
-
 /// Settings › Experimental: a feature's small picture.
 struct LabPicture: View {
     enum Kind { case arranging, strip, displays, anyZoom, agent }

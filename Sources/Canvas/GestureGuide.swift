@@ -564,6 +564,7 @@ struct TrackpadPane: View {
     @State private var group: GestureGuide.Group = .pointAndClick
     @State private var gesture: GestureGuide.Gesture = .click
     @State private var seeAll: Settings.SeeAllGesture = Settings.seeAllGesture
+    @State private var realDesktop: Bool = Settings.realDesktopOnShowDesktop
 
     var body: some View {
         Form {
@@ -636,6 +637,17 @@ struct TrackpadPane: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Section {
+                Toggle("Use the real macOS desktop", isOn: $realDesktop)
+            } header: {
+                SectionHeader(title: "Show Desktop",
+                              detail: "What spreading four fingers (or F11) reveals.")
+            } footer: {
+                Text("On, the canvas steps aside and the Mac's own Show Desktop runs — the real desktop, with its live icons. Needs Show Desktop enabled in System Settings › Keyboard › Keyboard Shortcuts › Mission Control (F11 by default). Off, the canvas flies to its own desktop picture.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .formStyle(.grouped)
         .onChange(of: group) { gesture = group.gestures(seeAll: seeAll)[0] }
@@ -643,5 +655,6 @@ struct TrackpadPane: View {
             Settings.seeAllGesture = seeAll
             if gesture == .fourFingerTap || gesture == .swipeUp { gesture = seeAll == .tap ? .fourFingerTap : .swipeUp }
         }
+        .onChange(of: realDesktop) { Settings.realDesktopOnShowDesktop = realDesktop }
     }
 }

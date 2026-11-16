@@ -432,7 +432,6 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
             let from = page
             page = target
             if target == .consent { model.consent = false }
-            if target == .loginItem { model.loginItem = true }
             if target == .basics, !replaying {
                 model.tutorialInput = nil
                 model.lesson = 0
@@ -531,24 +530,12 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
                                  primary: action("primary", "Get Started") { [weak self] in self?.getStarted() }, showsIcon: true)
 
         case .loginItem:
-            var note: String?
-            if !mac.liveWindowsSupported {
-                note = "This Mac can show the preview only: live windows need Apple silicon and macOS 15 or later."
-            } else if !mac.admin {
-                note = "Live windows will need an administrator, since two of the steps change the Mac’s settings."
-            }
-            // A rough idea of what's ahead: the two permissions for the preview, then live windows.
-            let estimate = mac.liveWindowsSupported
-                ? "Setup takes about a minute to try Sunlight, and about five more, with one restart, for live windows."
-                : "Setup takes about a minute."
-            var paragraphs = ["Your canvas and your shortcuts, ready the moment you log in.", estimate]
-            // Said before it happens: Continue turns Stage Manager off, which moves every window on screen.
-            if StageManager.isOn() {
-                paragraphs.append("Stage Manager is on, and Sunlight needs it off: it hides windows into a strip whenever an app comes forward. Continue turns it off, and it comes back on when you quit Sunlight.")
-            }
-            return SetupPageSpec(page: page, eyebrow: "Open at login", headline: "Start with Sunlight.",
-                                 paragraphs: paragraphs, extra: .loginItem,
-                                 primary: action("primary", "Continue") { [weak self] in self?.chooseLoginItem() }, note: note)
+            // Kept only so an old saved record can still be routed without a page of its own: Sunlight
+            // installs no login item and turns no Stage Manager setting off, so there is nothing to ask.
+            return SetupPageSpec(page: page, eyebrow: "Start with Sunlight",
+                                 headline: "Sunlight runs when you open it.",
+                                 paragraphs: ["Nothing is added to your login items and no system setting is changed. Accessibility and Screen Recording come next."],
+                                 primary: action("primary", "Continue") { [weak self] in self?.step(1) })
 
         case .accessibility:
             return SetupPageSpec(page: page, eyebrow: "Accessibility", headline: "Let Sunlight move your windows.",
@@ -593,18 +580,8 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
                     self.check()
                 })
             }
-            if mac.liveWindowsSupported {
-                paragraphs.append("Your windows are on the canvas as pictures, refreshed as they change. Live windows are the real thing: smooth, instant, and with no Screen Recording needed. Setting them up takes about five minutes and one restart into Recovery. Start now, or any time from Use Full Version in the bottom-left corner of the canvas.")
-                secondary.append(action("live", "Set Up Live Windows") { [weak self] in
-                    guard let self, !self.review else { return }
-                    SetupRecord.startedLive = true
-                    journal("Live windows setup started")
-                    self.check()
-                })
-            } else {
-                paragraphs.append("Your windows are on the canvas as pictures, refreshed as they change. Live windows need Apple silicon and macOS 15 or later, so this Mac stays in preview mode.")
-            }
-            return SetupPageSpec(page: page, eyebrow: "Preview", headline: mac.liveWindowsSupported ? "You’re set. This is the preview." : "You’re set.",
+            paragraphs.append("Your windows are on the canvas as pictures, refreshed as they change.")
+            return SetupPageSpec(page: page, eyebrow: "Preview", headline: "You’re set.",
                                  paragraphs: paragraphs,
                                  primary: action("primary", "Open the Canvas") { [weak self] in self?.close() },
                                  secondary: secondary, showsIcon: true)
@@ -721,25 +698,11 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
                                  secondary: [diagnose], note: note, busy: loading)
 
         case .tour:
-            let intro = "The canvas is a window manager you look at: everything on your Mac, live, at any zoom. Press the Mission Control key to come back to it from any window."
-            // Taken over already: the canvas is all that's left.
-            if isTakenOver?() == true {
-                return SetupPageSpec(page: page, eyebrow: "Live windows are on", headline: "Here’s how it works.",
-                                     paragraphs: [intro], extra: .tour,
-                                     primary: action("primary", "Open the Canvas") { [weak self] in self?.close() })
-            }
-            // Otherwise taking over is the way on, and the only one: its own consent follows, on the canvas,
-            // once the window is away.
-            return SetupPageSpec(page: page, eyebrow: "Live windows are on", headline: "Here’s how it works.",
-                                 paragraphs: [intro, "Last step: take over, and Sunlight becomes your Mac’s home. ⌘Tab, Mission Control and Show Desktop land on the canvas, and the Dock tucks away. Everything goes back when Sunlight quits."],
+            let intro = "The canvas is a window manager you look at: everything on your Mac, as a map, at any zoom. Press the Mission Control key to come back to it from any window."
+            return SetupPageSpec(page: page, eyebrow: "Ready", headline: "Here’s how it works.",
+                                 paragraphs: [intro, "Your Mac stays yours: Sunlight never changes system preferences, never adds a login item, and puts nothing inside other apps. The Dock, Mission Control and ⌘Tab are untouched."],
                                  extra: .tour,
-                                 primary: action("primary", "Take Over…") { [weak self] in
-                                     guard let self else { return }
-                                     let takeOver = self.onTakeOver
-                                     self.journal("Tour: take over")
-                                     self.close()
-                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { takeOver?() }
-                                 })
+                                 primary: action("primary", "Open the Canvas") { [weak self] in self?.close() })
         }
     }
 
@@ -798,13 +761,8 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
     }
 
     private func chooseLoginItem() {
+        // Nothing to record: no login item is installed (SetupFlow no longer routes here).
         guard !review else { return step(1) }
-        SetupRecord.loginItemChosen = true
-        journal("Open at login: \(model.loginItem ? "on" : "off")")
-        StageManager.turnOff(why: "setup")
-        if model.loginItem {
-            DispatchQueue.global(qos: .utility).async { LoginItem.register() }
-        }
         check()
     }
 

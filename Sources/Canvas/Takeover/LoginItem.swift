@@ -1,29 +1,10 @@
 import AppKit
 import ServiceManagement
 
-/// Sunlight as a login item, so the environment is the first thing on screen after login.
-/// Ad-hoc signing gives every rebuild a new identity, which the system may treat as a new app;
-/// `register()` is therefore called on every takeover launch and is a no-op once enabled.
+/// Sunlight as a login item. Tablecloth installs none: setup offers none and nothing registers one. What
+/// is left is the read the uninstall needs, and the unregister that takes away an earlier version's.
 enum LoginItem {
     static var status: SMAppService.Status { SMAppService.mainApp.status }
-
-    /// Even the status check is a round trip to launchd: call it off the main thread. Only opening
-    /// System Settings comes back to it.
-    static func register() {
-        let service = SMAppService.mainApp
-        guard service.status != .enabled else { return }
-        do {
-            try service.register()
-        } catch {
-            Log.note("Login item: register failed — \(error.localizedDescription)")
-            return
-        }
-        let status = service.status
-        Log.note("Login item: \(describe(status))")
-        if status == .requiresApproval {
-            DispatchQueue.main.async { SMAppService.openSystemSettingsLoginItems() }
-        }
-    }
 
     static func unregister() {
         let service = SMAppService.mainApp

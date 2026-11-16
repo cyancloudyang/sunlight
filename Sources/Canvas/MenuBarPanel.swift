@@ -43,6 +43,7 @@ final class MenuBarPanelModel: ObservableObject {
         var saveLayout: () -> Void = {}
         var deleteLayout: (String) -> Void = { _ in }
         var toggleStrip: () -> Void = {}
+        var toggleSnapshotRotation: () -> Void = {}
         var showDesktop: () -> Void = {}
         var arrange: (Int, Int) -> Void = { _, _ in }
         var showSettings: () -> Void = {}
@@ -50,8 +51,6 @@ final class MenuBarPanelModel: ObservableObject {
         var setUp: () -> Void = {}
         var checkForUpdates: () -> Void = {}
         var reloadLiveWindows: () -> Void = {}
-        var takeOver: () -> Void = {}
-        var release: () -> Void = {}
         var quit: () -> Void = {}
     }
 
@@ -61,6 +60,9 @@ final class MenuBarPanelModel: ObservableObject {
     /// The ⌘Tab strip shown (`Settings.switcherOn`); off, ⌘Tab still switches without it.
     @Published var switcher = true
     @Published var stripMode = false
+    /// One snapshot refreshed every second while the map sits still (`Settings.snapshotRotation`);
+    /// off, an idle map captures nothing.
+    @Published var snapshotRotation = false
     /// The experimental flags (`Settings.arranging`, `Settings.stripModeEnabled`): off, the Tidy tile,
     /// the Arrange row and the Strip Mode switch aren't there.
     @Published var arranging = false
@@ -77,7 +79,8 @@ final class MenuBarPanelModel: ObservableObject {
     @Published var liveWindowsUnloaded = false
     /// An update Sparkle found, by version, until it's installed.
     @Published var updateVersion: String?
-    @Published var takeoverRunning = false
+    /// The independent input is running: ⌘Tab and F3 are claimed while it is.
+    @Published var inputRunning = false
     @Published var canCheckForUpdates = false
     var actions = Actions()
 
@@ -104,7 +107,7 @@ final class MenuBarPanelModel: ObservableObject {
         switch rendering {
         case .live: return Caption(text: "On · live windows")
         case .pictures: return Caption(text: "On · screen capture")
-        case .preview: return Caption(text: "On · preview")
+        case .preview: return Caption(text: "On · snapshots")
         }
     }
 
@@ -117,10 +120,9 @@ final class MenuBarPanelModel: ObservableObject {
     var canToggleStrip: Bool { canvasAvailable && !busy }
     var canShowDesktop: Bool { canvasAvailable && !busy }
     var canToggleMinimap: Bool { isOn }
-    /// ⌘Tab is only claimed while takeover's key tap runs.
-    var canToggleSwitcher: Bool { isOn && takeoverRunning }
+    /// ⌘Tab is only claimed while the independent key tap runs.
+    var canToggleSwitcher: Bool { isOn && inputRunning }
     var canReload: Bool { isOn && liveWindowsUnloaded && !setupShowing }
-    var canTakeOver: Bool { isOn && !takeoverRunning && !setupShowing }
 
     /// Under Layouts when it's folded: the count, or what to do.
     var layoutsSummary: String {
@@ -321,9 +323,12 @@ private struct MoreScreen: View {
             }
             Tile {
                 VStack(spacing: 2) {
-                    if model.stripModeEnabled || model.arranging {
-                        SectionLabel("Canvas")
+                    SectionLabel("Canvas")
+                    SwitchRow(title: "Rotate Snapshots", keys: nil, on: model.snapshotRotation, enabled: model.isOn) {
+                        model.snapshotRotation.toggle()
+                        model.actions.toggleSnapshotRotation()
                     }
+                    .help("Refresh one window's snapshot every second while the map is idle")
                     if model.stripModeEnabled {
                         SwitchRow(title: "Strip Mode", keys: "⌃⌥S", on: model.stripMode, enabled: model.canToggleStrip) {
                             model.stripMode.toggle()
@@ -340,11 +345,6 @@ private struct MoreScreen: View {
                         dismiss(); model.actions.checkForUpdates()
                     }
                     Row(title: "Reload Live Windows…", detail: nil, enabled: model.canReload) { dismiss(); model.actions.reloadLiveWindows() }
-                    if model.takeoverRunning {
-                        Row(title: "Release the Mac…", detail: nil, enabled: true) { dismiss(); model.actions.release() }
-                    } else {
-                        Row(title: "Take Over the Mac…", detail: nil, enabled: model.canTakeOver) { dismiss(); model.actions.takeOver() }
-                    }
                     Divider().padding(.vertical, 4).padding(.horizontal, 6)
                     Row(title: "Quit Sunlight", detail: "⌘Q", enabled: true) { dismiss(); model.actions.quit() }
                 }

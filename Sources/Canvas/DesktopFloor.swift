@@ -43,8 +43,14 @@ final class DesktopFloor {
     let layer = CALayer()
     /// The part with files on it changed size or place (files added, moved or removed): it's placed again.
     var onContentChanged: (() -> Void)?
-    /// Off with Sunlight › Desktop Files: nothing captured, nothing drawn.
-    var isEnabled = Settings.showDesktopFloor {
+    /// Whether the floor is to be shown at all: asked for, and capturable — its window can only be had by
+    /// id, through the private path (`OneShotCapture.supportsWindowIDCapture`).
+    nonisolated static func enabled(show: Bool, capturesByID: Bool) -> Bool { show && capturesByID }
+
+    /// Off with Sunlight › Desktop Files: nothing captured, nothing drawn. Off too where the desktop's
+    /// window can't be captured, rather than failing a capture every refresh.
+    var isEnabled = DesktopFloor.enabled(show: Settings.showDesktopFloor,
+                                         capturesByID: OneShotCapture.supportsWindowIDCapture) {
         didSet {
             guard isEnabled != oldValue else { return }
             if isEnabled { lastCapture = 0 } else { clear() }

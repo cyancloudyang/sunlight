@@ -39,8 +39,9 @@ final class HandoffTests: XCTestCase {
     }
 
     func testAClickKeepsTheClickedSpotUnderThePointer() {
-        let p = plan(.clicked(at: CGPoint(x: 1000, y: 700), offset: CGPoint(x: 100, y: 50)))
-        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 650))
+        // The window is wholly on screen, so it stays put and the clicked spot stays under the pointer.
+        let p = plan(.clicked(at: CGPoint(x: 1000, y: 600), offset: CGPoint(x: 100, y: 50)))
+        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 550))
         XCTAssertEqual(p.inPlaceOrigin, p.origin)
         XCTAssertTrue(p.clicked)
         XCTAssertNotNil(p.inPlace)
@@ -61,6 +62,101 @@ final class HandoffTests: XCTestCase {
         let p = plan(.centered, tiledArea: CGRect(x: 2800, y: 1900, width: 1600, height: 1100))
         XCTAssertEqual(p.origin, CGPoint(x: 200, y: 138))
         XCTAssertNotNil(p.inPlace, "a tiled window keeps its place in its area")
+    }
+
+    // MARK: The card-click policy
+
+    func testACardClickEntersInPlaceRatherThanFillingTheScreen() {
+        // A click on a map card keeps the window's own size and place — the clicked spot stays under the
+        // pointer — rather than the fill-screen entry, which resizes the app to the visible frame.
+        let placement = Handoff.cardClick(at: CGPoint(x: 1000, y: 600), offset: CGPoint(x: 100, y: 50))
+        let p = plan(placement)
+        XCTAssertNotNil(p.inPlace, "a card click keeps the window's place; it does not fill the screen")
+        XCTAssertTrue(p.clicked)
+        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 550))
+    }
+
+    // MARK: Sliding a clicked window fully into view
+
+    func testSlidIntoViewLeavesAFullyVisibleWindowWhereItIs() {
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: 350), size: CGSize(width: 800, height: 600), visible: visible),
+                       CGPoint(x: 900, y: 350))
+    }
+
+    func testSlidIntoViewPushesEachOverhangingEdgeJustInside() {
+        let size = CGSize(width: 800, height: 600)
+        // Off the right edge: slide left until the right edge meets the screen's (2000 − 800 = 1200).
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 1500, y: 350), size: size, visible: visible), CGPoint(x: 1200, y: 350))
+        // Off the left edge: slide right to the screen's left.
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: -300, y: 350), size: size, visible: visible), CGPoint(x: 0, y: 350))
+        // Off the bottom: slide up until the bottom edge meets the screen's (38 + 1162 − 600 = 600).
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: 650), size: size, visible: visible), CGPoint(x: 900, y: 600))
+    }
+
+    func testSlidIntoViewLeavesTheTopToTheMenuBar() {
+        // Above the menu bar: the slide doesn't touch the top — the menu-bar clamp does that later, so the
+        // plan can still remember where the click asked (inPlaceOrigin).
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: -30), size: CGSize(width: 800, height: 600), visible: visible),
+                       CGPoint(x: 900, y: -30))
+    }
+
+    func testSlidIntoViewAlignsAnOversizedWindowToTheLeadingEdges() {
+        // Wider than the screen: left-align, as a centred oversized window does.
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: 350), size: CGSize(width: 2400, height: 600), visible: visible),
+                       CGPoint(x: 0, y: 350))
+        // Taller than the screen: top-align (the menu bar's height), so the top of it is on show.
+        XCTAssertEqual(Handoff.slidIntoView(CGPoint(x: 900, y: 350), size: CGSize(width: 800, height: 1400), visible: visible),
+                       CGPoint(x: 900, y: 38))
+    }
+
+    func testAClickOnAPartlyOffScreenWindowSlidesItFullyIntoView() {
+        // The proxy was clicked near the right edge: at 1:1 the window would hang off the right, so it
+        // slides left just enough to be wholly on screen, and still keeps its place (inPlace).
+        let p = plan(.clicked(at: CGPoint(x: 1600, y: 400), offset: CGPoint(x: 100, y: 50)))
+        XCTAssertEqual(p.origin, CGPoint(x: 1200, y: 350))
+        XCTAssertTrue(p.clicked)
+        XCTAssertNotNil(p.inPlace)
+        XCTAssertEqual(p.inPlaceOrigin, p.origin)
+    }
+
+    func testAClickOnAFullyVisibleWindowKeepsItExactlyWhereItIs() {
+        let p = plan(.clicked(at: CGPoint(x: 1000, y: 400), offset: CGPoint(x: 100, y: 50)))
+        XCTAssertEqual(p.origin, CGPoint(x: 900, y: 350))
+        XCTAssertEqual(p.inPlaceOrigin, p.origin)
+    }
+
+    // MARK: Filling the screen
+
+    func testFillScreenPlanUsesVisibleFrame() {
+        let visible = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        let rect = CGRect(x: 2000, y: -1500, width: 900, height: 600)
+        let plan = Handoff.plan(.fillScreen, rect: rect, camera: Camera(), visible: visible,
+                                scale: 1, tiledArea: visible)
+        XCTAssertEqual(plan.origin, visible.origin)  // pixelAligned 后仍重合
+        // 相机把 worldRect 中心对准屏幕中心
+        XCTAssertEqual(plan.camera.center(viewSize: visible.size).x, rect.midX, accuracy: 1)
+        XCTAssertEqual(plan.camera.center(viewSize: visible.size).y, rect.midY, accuracy: 1)
+    }
+
+    func testOutcomeAbortsWhenWindowGone() {
+        XCTAssertEqual(Handoff.outcome(windowAlive: false), .abortedWindowGone)
+        XCTAssertEqual(Handoff.outcome(windowAlive: true), .completed)
+    }
+
+    func testSeamUsesActualFrameNotRequested() {
+        let requested = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        let clamped = CGRect(x: 0, y: 25, width: 1024, height: 640)
+        XCTAssertEqual(Handoff.seamRect(actualFrame: clamped, requested: requested), clamped)
+    }
+
+    func testFlightRectClampsAtTheEnds() {
+        let from = CGRect(x: 0, y: 0, width: 100, height: 50)
+        let to = CGRect(x: 100, y: 100, width: 200, height: 100)
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: 0), from)
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: 1), to)
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: 0.5), CGRect(x: 50, y: 50, width: 150, height: 75))
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: 1.1), to, "the spring overshoots; the rect must not breathe past full")
+        XCTAssertEqual(Handoff.flightRect(from: from, to: to, at: -0.1), from)
     }
 
     // MARK: The camera
@@ -134,5 +230,41 @@ final class HandoffTests: XCTestCase {
         let global = view.global(viewOrigin: display)
         XCTAssertEqual(global.inView(viewOrigin: display), view)
         XCTAssertEqual(global.toScreen(CGPoint(x: 100, y: 200)), display, "the view's top-left is the display's origin")
+    }
+}
+
+/// Entering a window leaves the map behind it: an opaque canvas is still on the screen around a window
+/// that doesn't fill it — a fixed-size one, or one Accessibility clamps — unless it's taken off (#3).
+/// `hideMapForForeignFront` can't be the one to do it: it wants no `activeProxy`, and an entered window
+/// has one.
+final class MapStepsAsideTests: XCTestCase {
+    func testTheMapStepsOffOnceAWindowIsInFront() {
+        XCTAssertTrue(CanvasController.mapStepsAside(entered: true, staysUp: false, paused: false,
+                                                      otherWork: false, visible: true))
+    }
+
+    func testTheMapStaysUpForAnotherDisplay() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: true, staysUp: true, paused: false,
+                                                       otherWork: false, visible: true))
+    }
+
+    func testTheMapStaysUpWhenOffInTheMenuBar() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: true, staysUp: false, paused: true,
+                                                       otherWork: false, visible: true))
+    }
+
+    func testTheMapStaysUpWithTheWidgetEditorOrSetup() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: true, staysUp: false, paused: false,
+                                                       otherWork: true, visible: true))
+    }
+
+    func testNothingHappensWithTheMapAlreadyOff() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: true, staysUp: false, paused: false,
+                                                       otherWork: false, visible: false))
+    }
+
+    func testNoWindowEnteredNoStepAside() {
+        XCTAssertFalse(CanvasController.mapStepsAside(entered: false, staysUp: false, paused: false,
+                                                       otherWork: false, visible: true))
     }
 }

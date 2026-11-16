@@ -5,6 +5,22 @@ import CoreGraphics
 final class SwitcherKeysTests: XCTestCase {
     private let tab: Int64 = 48, grave: Int64 = 50, left: Int64 = 123, right: Int64 = 124, down: Int64 = 125, up: Int64 = 126
 
+    func testSummonTapLeavesSystemShortcutsAlone() {
+        var state = KeyTap.State()
+        state.entered = true
+        state.placesNewWindow = true
+        for (key, flags) in [(Int64(48), CGEventFlags.maskCommand), (123, .maskControl),
+                             (126, .maskControl), (103, []), (45, .maskCommand),
+                             (3, [.maskCommand, .maskControl])] {
+            XCTAssertEqual(KeyTap.summonAction(keyCode: key, flags: flags, state: &state), .pass)
+        }
+        for key: Int64 in [160, 99] {
+            state = KeyTap.State()
+            XCTAssertEqual(KeyTap.summonAction(keyCode: key, flags: [], state: &state), .send(.missionControl))
+            XCTAssertEqual(KeyTap.summonAction(keyCode: key, flags: [], state: &state, autorepeat: true), .swallow)
+        }
+    }
+
     private func act(_ key: Int64, _ flags: CGEventFlags, open: Bool) -> KeyTap.Action {
         var state = KeyTap.State()
         state.switcherOpen = open
